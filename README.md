@@ -49,10 +49,11 @@ Please refer to the NVMeDirect-APIs.txt file and examples in the
 exmaple/nvmed_example directory.
 
 
-# Contacts
+## Contacts
 
 The NVMeDirect framework is being currently maintained by [Computer Systems 
-Laboratory](http://csl.skku.edu) in Sungkyunkwan University, South Korea.
+Laboratory](http://csl.skku.edu) in Sungkyunkwan University, South Korea. 
+NVMeDirect is an on-going work and we welcome your contribution and feedback. 
 If you have any questions or suggestions, please contact the following people.
 
 - Hyeong-Jun Kim (hjkim@csl.skku.edu)
