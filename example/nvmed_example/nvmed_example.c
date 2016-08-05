@@ -1,0 +1,83 @@
+/*
+ * NVMeDirect Userspace Application Example
+ *
+ * Copyright (c) 2016 Computer Systems Laboratory, Sungkyunkwan University.
+ * http://csl.skku.edu
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the therm and condotions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ */
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#include "../../include/lib_nvmed.h"
+
+int main(int argc, char** argv) {
+	NVMED* nvmed;
+	NVMED_QUEUE* queue;
+	NVMED_HANDLE* handle;
+
+	char* dev_path;
+
+	void* ptr;
+
+	if(argc != 2) {
+		printf("usage: %s [dev_path]\n", argv[0]);
+		return -1;
+	}
+
+	dev_path = argv[1];
+
+	nvmed = nvmed_open(dev_path, 0);
+
+	if(nvmed == NULL) {
+		printf("Can't access to device\n");
+		return -1;
+	}
+	
+	queue = nvmed_queue_create(nvmed, 0);
+	if(queue == NULL) {
+		printf("Fail to create I/O queue\n");
+		nvmed_close(nvmed);
+		return -1;
+	}
+	
+	handle = nvmed_handle_create(queue, HANDLE_SYNC_IO);
+	if(handle == NULL) {
+		printf("Fail to create I/O handle\n");
+		nvmed_queue_destroy(queue);
+		nvmed_close(nvmed);
+		return -1;
+	}
+
+	ptr = nvmed_get_buffer(nvmed, 1);
+	memset(ptr, 0x0, 4096);
+
+	strcpy(ptr, "NVMeDirect I/O Test");
+	nvmed_write(handle, ptr, 4096);
+
+	memset(ptr, 0x0, 4096);
+	nvmed_lseek(handle, 0, SEEK_SET);
+	nvmed_read(handle, ptr, 4096);
+
+	printf("%s\n", (char *)ptr);
+	
+	nvmed_put_buffer(ptr);
+
+	nvmed_handle_destroy(handle);
+
+	nvmed_queue_destroy(queue);
+
+	nvmed_close(nvmed);
+
+
+	return 0;
+}

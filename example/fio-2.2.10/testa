@@ -1,0 +1,11 @@
+[global]
+direct=1
+ioscheduler=noop
+iodepth=1
+filesize=101M
+filename=/dev/sdb1
+ioengine=sync
+
+[seq]
+rw=write
+bs=1MB

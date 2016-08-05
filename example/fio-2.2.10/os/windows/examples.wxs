@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Fragment>
+        <DirectoryRef Id="examples">
+                <Component>
+                    <File Source="..\..\examples\1mbs_clients.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\aio-read.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\disk-zone-profile.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\fsx.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\iometer-file-access-server.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\netio.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\netio_multicast.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\ssd-test.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\surface-scan.fio" />
+                </Component>
+                <Component>
+                    <File Source="..\..\examples\tiobench-example.fio" />
+                </Component>
+                <Component>
+                  <File Source="..\..\examples\null.fio" />
+                </Component>
+                <Component>
+                  <File Source="..\..\examples\flow.fio" />
+                </Component>
+                <Component>
+                  <File Source="..\..\examples\cpuio.fio" />
+                </Component>
+                <Component>
+                  <File Source="..\..\examples\falloc.fio" />
+                </Component>
+                <Component>
+                  <File Source="..\..\examples\fusion-aw-sync.fio" />
+                </Component>
+                <Component>
+                  <File Source="..\..\examples\ssd-steadystate.fio" />
+                </Component>
+                <Component>
+                  <File Source="..\..\examples\zipf.fio" />
+                </Component>
+        </DirectoryRef>
+    </Fragment>
+    <Fragment>
+        <ComponentGroup Id="examples">
+            <ComponentRef Id="_1mbs_clients.fio" />
+            <ComponentRef Id="aio_read.fio" />
+            <ComponentRef Id="disk_zone_profile.fio" />
+            <ComponentRef Id="fsx.fio" />
+            <ComponentRef Id="iometer_file_access_server.fio" />
+            <ComponentRef Id="netio.fio" />
+            <ComponentRef Id="netio_multicast.fio" />
+            <ComponentRef Id="ssd_test.fio" />
+            <ComponentRef Id="surface_scan.fio" />
+            <ComponentRef Id="tiobench_example.fio" />
+            <ComponentRef Id="null.fio" />
+            <ComponentRef Id="flow.fio" />
+            <ComponentRef Id="cpuio.fio" />
+            <ComponentRef Id="falloc.fio" />
+            <ComponentRef Id="fusion_aw_sync.fio" />
+            <ComponentRef Id="ssd_steadystate.fio" />
+            <ComponentRef Id="zipf.fio" />
+        </ComponentGroup>
+    </Fragment>
+</Wix>
