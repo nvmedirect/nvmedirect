@@ -173,7 +173,6 @@ void nvmed_complete_iod(NVMED_IOD* iod) {
 	nvmed_handle = iod->nvmed_handle;
 	if(iod->prp_addr != NULL)
 		nvmed_handle_put_prp(nvmed_handle, iod->prp_addr, iod->prp_pa);
-	iod->status = IO_COMPLETE;
 
 	if(iod->context != NULL) { 
 		iod->context->num_complete_io++;
@@ -181,6 +180,7 @@ void nvmed_complete_iod(NVMED_IOD* iod) {
 			iod->context->status = AIO_COMPLETE;
 			if(iod->context->aio_callback) {
 				iod->context->aio_callback(iod->context, iod->context->cb_userdata);
+				iod->context = NULL;
 			}
 		}
 	}
@@ -192,6 +192,8 @@ void nvmed_complete_iod(NVMED_IOD* iod) {
 			FLAG_SET_SYNC(cache, CACHE_UPTODATE);
 		}
 	}
+
+	iod->status = IO_COMPLETE;
 }
 
 /*
@@ -513,7 +515,8 @@ NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
 	nvmed_queue->cq_head = 0;
 	nvmed_queue->cq_phase = 1;
 
-	nvmed_queue->iod_arr = malloc(sizeof(NVMED_IOD) * nvmed->dev_info->q_depth);
+	nvmed_queue->iod_arr = calloc(nvmed->dev_info->q_depth, sizeof(NVMED_IOD));
+	nvmed_queue->iod_pos = 0;
 
 	pthread_spin_init(&nvmed_queue->mngt_lock, 0);
 	pthread_spin_init(&nvmed_queue->sq_lock, 0);
@@ -752,18 +755,19 @@ int nvmed_close(NVMED* nvmed) {
 	free(nvmed->ns_path);
 
 	//END PROCESS_CQ THREAD
-	while(nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND);
+	if(nvmed->process_cq_status != TD_STATUS_STOP) {
+		while(nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND);
 
-	if(nvmed->process_cq_status == TD_STATUS_SUSPEND) {
-		pthread_mutex_lock(&nvmed->process_cq_mutex);
-		pthread_cond_signal(&nvmed->process_cq_cond);
-		pthread_mutex_unlock(&nvmed->process_cq_mutex);
+		if(nvmed->process_cq_status == TD_STATUS_SUSPEND) {
+			pthread_mutex_lock(&nvmed->process_cq_mutex);
+			pthread_cond_signal(&nvmed->process_cq_cond);
+			pthread_mutex_unlock(&nvmed->process_cq_mutex);
+		}
+
+		while(nvmed->process_cq_status != TD_STATUS_RUNNING);
+		nvmed->process_cq_status = TD_STATUS_REQ_STOP;
+		pthread_join(nvmed->process_cq_td, (void **)&status);
 	}
-
-	while(nvmed->process_cq_status != TD_STATUS_RUNNING);
-	nvmed->process_cq_status = TD_STATUS_REQ_STOP;
-	pthread_join(nvmed->process_cq_td, (void **)&status);
-
 	//CACHE REMOVE
 	while (nvmed->slot_head.lh_first != NULL) {
 		slot = nvmed->slot_head.lh_first;
@@ -829,7 +833,15 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 
 	pthread_spin_lock(&nvmed_queue->sq_lock);
 
-	iod = nvmed_queue->iod_arr + nvmed_queue->sq_tail;
+	while(1) {
+		target_id = nvmed_queue->iod_pos++;
+		iod = nvmed_queue->iod_arr + target_id;
+		if(nvmed_queue->iod_pos == nvmed->dev_info->q_depth)
+			nvmed_queue->iod_pos = 0;
+		if(iod->status != IO_INIT)
+			break;
+	}
+
 	iod->sq_id = nvmed_queue->sq_tail;
 	iod->prp_addr = prp2_addr;
 	iod->prp_pa = prp2;
@@ -857,7 +869,6 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	cmnd = &nvmed_queue->sq_cmds[nvmed_queue->sq_tail];
 	memset(cmnd, 0, sizeof(*cmnd));
 
-	target_id = nvmed_queue->sq_tail;
 	switch(opcode) {
 		case nvme_cmd_flush:
 			cmnd->rw.opcode = nvme_cmd_flush;

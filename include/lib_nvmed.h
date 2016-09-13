@@ -25,6 +25,7 @@
 #include <pthread.h>
 #include <linux/nvme.h>
 #include "./radix-tree.h"
+#include <stdbool.h>
 
 #define PAGE_SIZE		sysconf(_SC_PAGESIZE)
 
@@ -56,7 +57,6 @@
 #define true	1
 #define false	0
 
-typedef _Bool bool;
 typedef __u64 u64;
 typedef __u32 u32;
 typedef __u16 u16;
@@ -192,6 +192,7 @@ typedef struct nvmed_queue {
 	u8	cq_phase, cqe_seen;
 
 	struct nvmed_iod* iod_arr;
+	unsigned int	  iod_pos;
 
 	int numHandle;
 
