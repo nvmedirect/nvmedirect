@@ -40,6 +40,10 @@
 	#define	DEV_FROM_NVMe(nvme_dev)	&nvme_dev->pci_dev->dev
 	#define BLK_RQ_DEVICE_CMD_TYPE	REQ_TYPE_SPECIAL
 #else
+	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+		#define KERN_440
+		#include "nvme.h"
+	#endif
 	#define	DEV_FROM_NVMe(nvme_dev)	nvme_dev->dev
 	#define BLK_RQ_DEVICE_CMD_TYPE	REQ_TYPE_DRV_PRIV
 	#define NVME_SUPPORT_BLOCK_MQ

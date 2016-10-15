@@ -54,7 +54,11 @@ int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd,
 	req->special = (void *)0;
 
 	if (buffer && bufflen) {
+#ifdef KERN_440
+		ret = blk_rq_map_kern(q, req, buffer, bufflen, __GFP_DIRECT_RECLAIM);
+#else
 		ret = blk_rq_map_kern(q, req, buffer, bufflen, __GFP_WAIT);
+#endif
 		if (ret)
 			goto out;
 	}
