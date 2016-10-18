@@ -33,7 +33,15 @@
 #define PCI_CLASS_NVME	0x010802
 
 #define KERNEL_VERSION_CODE	KERNEL_VERSION(KERNEL_VERSION_MAJOR, \
-										KERNEL_VERSION_MINOR, KERNEL_VERSION_PATCH)
+										KERNEL_VERSION_MINOR, 0)
+
+#define DEV_TO_ADMINQ(dev) dev->admin_q
+#define NS_TO_DEV(ns) ns->dev
+#define DEV_TO_INSTANCE(dev) dev->instance
+#define DEV_TO_HWSECTORS(dev) dev->max_hw_sectors
+#define DEV_TO_STRIPESIZE(dev) dev->stripe_size
+#define DEV_TO_VWC(dev) dev->vwc
+#define DEV_TO_NS_LIST(dev) dev->namespaces
 
 /* Legacy struct NVMe, BLK_MQ->REQ_TYPE */
 #if KERNEL_VERSION_CODE < KERNEL_VERSION(4,2,0)
@@ -41,8 +49,50 @@
 	#define BLK_RQ_DEVICE_CMD_TYPE	REQ_TYPE_SPECIAL
 #else
 	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,4,0)
+		#define __GFP_WAIT __GFP_DIRECT_RECLAIM
+	#endif
+	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,4,0)
 		#define KERN_440
 		#include "nvme.h"
+	#endif
+	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,5,0)
+		#define KERN_450
+		#include "nvme.h"
+	#endif
+	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,6,0)
+		#define KERN_460
+		#include "nvme.h"
+	#endif
+	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,7,0)
+		#define KERN_470
+		#include "nvme.h"
+	#endif
+	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,8,0)
+		#define KERN_480
+		#include "nvme.h"
+	#endif
+	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,5,0)
+		#define COMPACT_BLKMQ_REQ_ALLOC
+
+		#undef DEV_TO_ADMINQ
+		#undef NS_TO_DEV
+		#undef DEV_TO_INSTANCE
+		#undef DEV_TO_HWSECTORS
+		#undef DEV_TO_STRIPESIZE
+		#undef DEV_TO_VWC
+		#undef DEV_TO_NS_LIST
+
+		#define DEV_TO_ADMINQ(dev) dev->ctrl.admin_q
+		#define NS_TO_DEV(ns) container_of(ns->ctrl, struct nvme_dev, ctrl)
+		#define DEV_TO_INSTANCE(dev) dev->ctrl.instance
+		#define DEV_TO_HWSECTORS(dev) dev->ctrl.max_hw_sectors
+		#define DEV_TO_STRIPESIZE(dev) dev->ctrl.stripe_size
+		#define DEV_TO_VWC(dev) dev->ctrl.vwc
+		#define DEV_TO_NS_LIST(dev) dev->ctrl.namespaces
+
+	#endif
+	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,6,0)
+		#define NVME_ADMIN_CMD_SUBMIT_WITH_CQE
 	#endif
 	#define	DEV_FROM_NVMe(nvme_dev)	nvme_dev->dev
 	#define BLK_RQ_DEVICE_CMD_TYPE	REQ_TYPE_DRV_PRIV

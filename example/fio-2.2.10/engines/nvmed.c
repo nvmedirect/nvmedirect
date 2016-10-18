@@ -116,7 +116,7 @@ static int fio_nvmed_getevents_aio(struct thread_data *td, unsigned int min,
 		memset(&start, 0, sizeof(start));
 
 	for(;;) {
-		result += nvmed_handle_complete(aiod->handle);
+		result += nvmed_aio_handle_complete(aiod->handle);
 		if(result>=min) break;
 		if (have_timeout) {
 			unsigned long long usec;

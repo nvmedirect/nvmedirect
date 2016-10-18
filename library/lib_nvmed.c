@@ -988,6 +988,7 @@ NVMED_CACHE* nvmed_get_cache(NVMED_HANDLE* nvmed_handle) {
 				}
 			}
 			
+			if(FLAG_ISSET(cache, CACHE_DIRTY))
 			nvmed_cache_io_rw(nvmed_handle, nvme_cmd_write, temp_head.tqh_first, 
 					start_lpaddr * PAGE_SIZE, (end_lpaddr - start_lpaddr) * PAGE_SIZE, 
 					HANDLE_SYNC_IO);
@@ -1018,6 +1019,7 @@ NVMED_CACHE* nvmed_get_cache(NVMED_HANDLE* nvmed_handle) {
 		ret_cache = cache;
 	}
 
+	INIT_SYNC(ret_cache->ref);
 	pthread_spin_unlock(&nvmed->cache_list_lock);
 	pthread_rwlock_unlock(&nvmed->cache_radix_lock);
 
@@ -1421,7 +1423,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	NVMED_CACHE **cacheTarget;
 	ssize_t total_read = 0;
 	unsigned long start_block, end_block, io_blocks;
-	unsigned int  find_blocks;
+	unsigned int  find_blocks, final_num_blocks;
 	unsigned long	io_start, io_nums = 0;
 	int i = 0, block_idx;
 	int cache_idx = 0;
@@ -1440,6 +1442,21 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	pthread_rwlock_unlock(&nvmed->cache_radix_lock);
 
 	TAILQ_INIT(&temp_head);
+
+	if(find_blocks > 0) {
+		cache = *(cacheP + 0);
+		if(cache->lpaddr > end_block)
+			find_blocks = 0;
+		else {
+			final_num_blocks = 0;
+			for(i=0; i<find_blocks; i++) {
+				cache = *(cacheP + i);
+				if(cache->lpaddr >= start_block && end_block <= cache->lpaddr)
+					final_num_blocks++;
+			}
+			find_blocks = final_num_blocks;
+		}
+	}
 
 	if(find_blocks == 0) {
 		//read all
@@ -1480,6 +1497,8 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 				buf_offs+= PAGE_SIZE;
 			}
 			
+			DEC_SYNC(cache->ref);
+
 			pthread_rwlock_wrlock(&nvmed->cache_radix_lock);
 			pthread_spin_lock(&nvmed->cache_list_lock);
 			TAILQ_INSERT_TAIL(&nvmed->lru_head, cache, cache_list);
@@ -1520,7 +1539,6 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 							TAILQ_INSERT_TAIL(&nvmed->lru_head, __cache, cache_list);
 							radix_tree_insert(&nvmed->cache_root, __cache->lpaddr, __cache);
 							FLAG_SET_SYNC(__cache, CACHE_LRU);
-							INC_SYNC(__cache->ref);
 						}
 
 						pthread_spin_unlock(&nvmed->cache_list_lock);
@@ -1528,6 +1546,8 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 
 						io_nums = 0;
 					}
+					else
+						INC_SYNC(cache->ref);
 
 					i++;
 
@@ -1536,20 +1556,19 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 					TAILQ_REMOVE(&nvmed->lru_head, cache, cache_list);
 					TAILQ_INSERT_TAIL(&nvmed->lru_head,cache, cache_list);
 					pthread_spin_unlock(&nvmed->cache_list_lock);
-					INC_SYNC(cache->ref);
-
-					continue;
 				}
-				
-				cache = nvmed_get_cache(nvmed_handle);
-				cache->lpaddr = block_idx;
-				TAILQ_INSERT_TAIL(&temp_head, cache, cache_list);
-				io_nums++;
-				if(io_nums == 1) io_start = cache->lpaddr;
-	
-				nvmed->num_cache_usage++;
+				else {
 
-				cacheTarget[block_idx-start_block] = cache;
+					cache = nvmed_get_cache(nvmed_handle);
+					cache->lpaddr = block_idx;
+					TAILQ_INSERT_TAIL(&temp_head, cache, cache_list);
+					io_nums++;
+					if(io_nums == 1) io_start = cache->lpaddr;
+
+					nvmed->num_cache_usage++;
+
+					cacheTarget[block_idx-start_block] = cache;
+				}
 			}
 
 			for(i=0; i<io_blocks; i++)
@@ -1571,7 +1590,6 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 				TAILQ_INSERT_TAIL(&nvmed->lru_head, __cache, cache_list);
 				radix_tree_insert(&nvmed->cache_root, __cache->lpaddr, __cache);
 				FLAG_SET_SYNC(__cache, CACHE_LRU);
-				INC_SYNC(__cache->ref);
 			}
 
 			pthread_spin_unlock(&nvmed->cache_list_lock);
@@ -1602,7 +1620,6 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 				buf_offs+= PAGE_SIZE;
 			}
 
-			DEC_SYNC(cache->ref);
 		}
 	}
 
@@ -1798,7 +1815,7 @@ void nvmed_flush_handle(NVMED_HANDLE* nvmed_handle) {
 
 	while (nvmed_handle->dirty_list.lh_first != NULL) {
 		cache = nvmed_handle->dirty_list.lh_first;
-		nvmed_cache_io_rw(nvmed_handle, nvme_cmd_read, cache, 
+		nvmed_cache_io_rw(nvmed_handle, nvme_cmd_write, cache, 
 				cache->lpaddr * PAGE_SIZE, PAGE_SIZE, HANDLE_SYNC_IO);
 		LIST_REMOVE(cache, handle_cache_list);
 	}

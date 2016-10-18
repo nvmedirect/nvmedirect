@@ -31,13 +31,20 @@
 /* Submit SYNC Command for MQ support NVMe Driver */
 int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd, 
 		void* buffer, unsigned bufflen, u32 *result) {
-	struct request_queue* q = dev->admin_q;
+	struct request_queue* q = DEV_TO_ADMINQ(dev);
 	bool write = cmd->common.opcode & 1;
 	struct bio *bio = NULL;
 	struct request *req;
 	int ret;
+#ifdef NVME_ADMIN_CMD_SUBMIT_WITH_CQE
+	struct nvme_completion cqe;
+#endif
 
+#ifdef COMPACT_BLKMQ_REQ_ALLOC
+	req = blk_mq_alloc_request(q, write, GFP_KERNEL);
+#else
 	req = blk_mq_alloc_request(q, write, GFP_KERNEL, false);
+#endif
 	if (IS_ERR(req))
 		return PTR_ERR(req);
 
@@ -52,13 +59,12 @@ int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd,
 	req->cmd = (unsigned char *)cmd;
 	req->cmd_len = sizeof(struct nvme_command);
 	req->special = (void *)0;
+#ifdef NVME_ADMIN_CMD_SUBMIT_WITH_CQE
+	req->special = &cqe;
+#endif
 
 	if (buffer && bufflen) {
-#ifdef KERN_440
-		ret = blk_rq_map_kern(q, req, buffer, bufflen, __GFP_DIRECT_RECLAIM);
-#else
 		ret = blk_rq_map_kern(q, req, buffer, bufflen, __GFP_WAIT);
-#endif
 		if (ret)
 			goto out;
 	}
@@ -66,8 +72,13 @@ int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd,
 	blk_execute_rq(req->q, NULL, req, 0);
 	if (bio)
 		blk_rq_unmap_user(bio);
-	if (result)
+	if (result) {
+#ifdef NVME_ADMIN_CMD_SUBMIT_WITH_CQE
+		*result = le32_to_cpu(cqe.result);
+#else
 		*result = (u32)(uintptr_t)req->special;
+#endif
+	}
 
 	ret = req->errors;
  out:
@@ -104,7 +115,11 @@ static int nvmed_set_features(NVMED_DEV_ENTRY *dev_entry, unsigned fid, unsigned
 	
 	memset(&c, 0, sizeof(c));
 	c.features.opcode = nvme_admin_set_features;
+#ifdef KERN_480
+	c.features.dptr.prp1 = cpu_to_le64(dma_addr);
+#else
 	c.features.prp1 = cpu_to_le64(dma_addr);
+#endif
 	c.features.fid = cpu_to_le32(fid);
 	c.features.dword11 = cpu_to_le32(dword11);
 
@@ -267,21 +282,21 @@ static NVMED_USER_QUOTA_ENTRY* nvmed_get_user_quota(NVMED_NS_ENTRY *ns_entry, ku
 static int nvmed_get_device_info(NVMED_NS_ENTRY *ns_entry, 
 								NVMED_DEVICE_INFO __user *u_dev_info) {
 	struct nvme_ns *ns = ns_entry->ns;
-	struct nvme_dev *dev = ns->dev;
+	struct nvme_dev *dev = NS_TO_DEV(ns);
 	struct nvmed_device_info dev_info;
 	
 	if(nvmed_get_user_quota(ns_entry, current_uid()) < 0)
 		return -EPERM;
 
-	dev_info.instance = dev->instance;
+	dev_info.instance = DEV_TO_INSTANCE(dev);
 	dev_info.ns_id = ns->ns_id;
 	dev_info.capacity = ns->disk->part0.nr_sects << (ns->lba_shift);
 	dev_info.q_depth = dev->q_depth;
 	dev_info.lba_shift = ns->lba_shift;
-	dev_info.max_hw_sectors = dev->max_hw_sectors;
-	dev_info.stripe_size = dev->stripe_size;
+	dev_info.max_hw_sectors = DEV_TO_HWSECTORS(dev);
+	dev_info.stripe_size = DEV_TO_STRIPESIZE(dev);
 	dev_info.db_stride = dev->db_stride;
-	dev_info.vwc = dev->vwc;
+	dev_info.vwc = DEV_TO_VWC(dev);
 	copy_to_user(u_dev_info, &dev_info, sizeof(dev_info));
 
 	return NVMED_SUCCESS;
@@ -501,7 +516,7 @@ static const struct file_operations nvme_queue_cq_fops = {
 static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__qid) {
 	NVMED_DEV_ENTRY *dev_entry = ns_entry->dev_entry;
 	struct nvme_ns *ns = ns_entry->ns;
-	struct nvme_dev *dev = ns->dev;
+	struct nvme_dev *dev = NS_TO_DEV(ns);
 	unsigned int queue_count;
 	NVMED_QUEUE_ENTRY *queue;
 	size_t size;
@@ -775,12 +790,12 @@ static NVMED_RESULT nvmed_scan_device(void) {
 
 		list_add(&dev_entry->list, &nvmed_dev_list);
 		
-		list_for_each_entry(ns, &dev->namespaces, list) {
+		list_for_each_entry(ns, &DEV_TO_NS_LIST(dev), list) {
 			ns_entry = kzalloc(sizeof(*ns_entry), GFP_KERNEL);
 			ns_entry->dev_entry = dev_entry;
 			ns_entry->ns = ns;
 			
-			sprintf(dev_name, "nvme%dn%u", dev->instance, ns->ns_id);
+			sprintf(dev_name, "nvme%dn%u", DEV_TO_INSTANCE(dev), ns->ns_id);
 
 			ns_entry->ns_proc_root = proc_mkdir(dev_name, NVMED_PROC_ROOT);
 			if(!ns_entry->ns_proc_root) {
