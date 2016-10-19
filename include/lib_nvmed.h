@@ -64,7 +64,6 @@ typedef __u8  u8;
 
 //FLAGS for NVMED
 enum {
-	NVMED_USE_CACHE			= 0,
 	NVMED_NO_CACHE			= 1 << 0,
 	NVMED_CACHE_SIZE		= 1	<< 1,
 	NVMED_CACHE_LAZY_INIT	= 1	<< 2,
