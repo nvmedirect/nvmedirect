@@ -17,6 +17,10 @@
 #ifndef _LIB_NVMED_H
 #define _LIB_NVMED_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <linux/types.h>
 #include <linux/types.h>
 #include <sys/types.h>
@@ -241,7 +245,7 @@ typedef struct nvmed_aio_ctx {
 	int num_init_io;
 	int num_complete_io;
 	
-	void* private;
+	void* private_data;
 	void* cb_userdata;
 	void (*aio_callback)(const struct nvmed_aio_ctx *context, void *userdata);
 } NVMED_AIO_CTX;
@@ -320,4 +324,9 @@ int nvmed_get_user_quota(NVMED*, uid_t,
 		unsigned int*, unsigned int *);
 
 int virt_to_phys(NVMED* nvmed, void* addr, u64* paArr, unsigned int num_bytes);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif /* _LIB_NVMED_H */
