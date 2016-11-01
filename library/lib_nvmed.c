@@ -617,26 +617,19 @@ void* nvmed_process_cq(void *data) {
 
 /*
  * Translate /dev/nvmeXnY -> /proc/nvmed/nvmeXnY/admin
+ *							or /proc/nvmed/nvmeXnYpZ/admin
  */
 int get_path_from_blkdev(char* blkdev, char** admin_path) {
 	char temp_path[16];
 	char *proc_path;
-	char *token;
 	int path_len;
-	int dev_num, ns_num;
 	
 	strcpy(temp_path, blkdev+9);
 	path_len = 23;
+	path_len+= strlen(temp_path);
 
-	token = strtok(temp_path, "n");
-	path_len += strlen(token);
-	dev_num = atoi(token);
-	token = strtok(NULL, " ");
-	path_len += strlen(token);
-	ns_num = atoi(token);
-	
 	proc_path = malloc(sizeof(char) * path_len);
-	sprintf(proc_path, "/proc/nvmed/nvme%dn%d/admin", dev_num, ns_num);
+	sprintf(proc_path, "/proc/nvmed/nvme%s/admin", temp_path);
 
 	if(access(proc_path, F_OK) < 0) {
 		free(proc_path);
