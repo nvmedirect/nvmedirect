@@ -874,6 +874,9 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	cmnd = &nvmed_queue->sq_cmds[nvmed_queue->sq_tail];
 	memset(cmnd, 0, sizeof(*cmnd));
 
+	//remap start_lba
+	start_lba += nvmed->dev_info->start_sect;
+
 	switch(opcode) {
 		case nvme_cmd_flush:
 			cmnd->rw.opcode = nvme_cmd_flush;
@@ -1280,6 +1283,24 @@ ssize_t nvmed_cache_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, NVMED_CACHE *__
 	return total_io;
 }
 
+bool nvmed_rw_verify_area(NVMED_HANDLE* nvmed_handle, 
+		unsigned long start_lba, unsigned int len) {
+	NVMED *nvmed = HtoD(nvmed_handle);
+	NVMED_DEVICE_INFO *dev_info = nvmed->dev_info;
+
+	if(start_lba < dev_info->start_sect)
+		return false;
+
+	if((dev_info->start_sect + dev_info->nr_sects) < start_lba)
+		return false;
+
+	if((dev_info->start_sect + dev_info->nr_sects)
+			< (start_lba + len))
+		return false;
+
+	return true;
+}
+
 /*
  * Make I/O request from User memory
  */
@@ -1306,6 +1327,10 @@ ssize_t nvmed_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	// Async - return wo/poll
 	
 	if(len % 512) return 0;
+
+	if(!nvmed_rw_verify_area(nvmed_handle, start_lba, len))
+		return -1;
+
 	if(FLAG_ISSET(nvmed_handle, HANDLE_MQ)) {
 		nvmed_queue = nvmed_handle->mq_get_queue(nvmed_handle, opcode, 
 				start_lba, len);
@@ -1398,6 +1423,9 @@ int nvmed_aio_enqueue(NVMED_AIO_CTX* context) {
 	NVMED_HANDLE *handle = context->handle;
 	NVMED_QUEUE *queue = HtoQ(handle);
 
+	if(!nvmed_rw_verify_area(handle, context->start_lba, context->len))
+		return NVMED_AIO_ERROR;
+
 	queue->aio_q_head++;
 	context->status = AIO_INIT;
 	context->num_init_io = 0;
@@ -1434,6 +1462,9 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	int cache_idx = 0;
 	unsigned int buf_offs, buf_copy_size, cache_offs;
 	TAILQ_HEAD(cache_list, nvmed_cache) temp_head;
+
+	if(!nvmed_rw_verify_area(nvmed_handle, start_lba, len))
+		return -1;
 
 	start_block = start_lba / PAGE_SIZE;
 	end_block = (start_lba + len - 1) / PAGE_SIZE;
@@ -1648,6 +1679,9 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	int block_idx=0, cache_idx=0;
 	bool found_from_cache;
 	TAILQ_HEAD(cache_list, nvmed_cache) temp_head;
+
+	if(!nvmed_rw_verify_area(nvmed_handle, start_lba, len))
+		return -1;
 
 	start_block = start_lba / PAGE_SIZE;
 	end_block = (start_lba + len - 1) / PAGE_SIZE;

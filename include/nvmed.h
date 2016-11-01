@@ -61,7 +61,7 @@ typedef struct nvmed_buf {
 } NVMED_BUF;
 
 #ifndef _NVMED_DEV_INFO_
-#define _NVMED_DEV_INTO_
+#define _NVMED_DEV_INFO_
 typedef struct nvmed_device_info {
 	int instance;
 	int lba_shift;
@@ -72,6 +72,9 @@ typedef struct nvmed_device_info {
 	u32 stripe_size;
 	u32 db_stride;
 	u8	vwc;
+
+	unsigned long start_sect;
+	unsigned long nr_sects;
 } NVMED_DEVICE_INFO;
 #endif
 

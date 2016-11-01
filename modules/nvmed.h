@@ -169,6 +169,11 @@ typedef struct nvmed_ns_entry {
 
 	struct list_head queue_list;
 	struct list_head user_list;
+	
+	int partno;
+
+	sector_t start_sect;
+	sector_t nr_sects;
 } NVMED_NS_ENTRY;
 
 typedef struct nvmed_queue_entry {

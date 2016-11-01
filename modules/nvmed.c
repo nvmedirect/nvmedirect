@@ -23,6 +23,7 @@
 #include <linux/sysfs.h>
 #include <linux/string.h>
 #include <linux/proc_fs.h>
+#include <linux/genhd.h>
 
 #include "./nvmed.h"
 #include "../include/nvmed.h"
@@ -297,6 +298,9 @@ static int nvmed_get_device_info(NVMED_NS_ENTRY *ns_entry,
 	dev_info.stripe_size = DEV_TO_STRIPESIZE(dev);
 	dev_info.db_stride = dev->db_stride;
 	dev_info.vwc = DEV_TO_VWC(dev);
+	dev_info.start_sect = ns_entry->start_sect;
+	dev_info.nr_sects = ns_entry->nr_sects;
+
 	copy_to_user(u_dev_info, &dev_info, sizeof(dev_info));
 
 	return NVMED_SUCCESS;
@@ -748,14 +752,18 @@ static NVMED_RESULT nvmed_scan_device(void) {
 	struct pci_dev *pdev = NULL;
 	struct nvme_dev *dev;
 	struct nvme_ns *ns;
-	
+
 	NVMED_DEV_ENTRY *dev_entry;
 	NVMED_NS_ENTRY *ns_entry;
-
+		
 	char dev_name[32];
 	int i;
 	int ret;
 	
+	/* for Partition support */
+	struct disk_part_iter piter;
+	struct hd_struct *part;
+
 	ret = request_module("nvme");
 
 	if(ret < 0) {
@@ -791,35 +799,48 @@ static NVMED_RESULT nvmed_scan_device(void) {
 		list_add(&dev_entry->list, &nvmed_dev_list);
 		
 		list_for_each_entry(ns, &DEV_TO_NS_LIST(dev), list) {
-			ns_entry = kzalloc(sizeof(*ns_entry), GFP_KERNEL);
-			ns_entry->dev_entry = dev_entry;
-			ns_entry->ns = ns;
-			
-			sprintf(dev_name, "nvme%dn%u", DEV_TO_INSTANCE(dev), ns->ns_id);
+			disk_part_iter_init(&piter, ns->disk, DISK_PITER_INCL_PART0);
+			while ((part = disk_part_iter_next(&piter))) {
+				if(part != &ns->disk->part0 && !part->info) continue;
 
-			ns_entry->ns_proc_root = proc_mkdir(dev_name, NVMED_PROC_ROOT);
-			if(!ns_entry->ns_proc_root) {
-				NVMED_ERR("NVMeDirect: Error creating proc directory - %s\n", dev_name);
-				kfree(ns_entry);
-				continue;
-			}
-			
-			ns_entry->proc_admin = proc_create_data("admin", S_IRUSR|S_IRGRP|S_IROTH,
-					ns_entry->ns_proc_root, &nvmed_ns_fops, ns_entry);
-		
-			if(!ns_entry->proc_admin) {
-				NVMED_ERR("NVMeDirect: Error creating proc admin entry - %s\n", dev_name);
-				proc_remove(ns_entry->ns_proc_root);
-				kfree(ns_entry);
-				continue;
-			}
-			
-			INIT_LIST_HEAD(&ns_entry->queue_list);
-			INIT_LIST_HEAD(&ns_entry->user_list);
-			
-			list_add(&ns_entry->list, &dev_entry->ns_list);
+				ns_entry = kzalloc(sizeof(*ns_entry), GFP_KERNEL);
+				ns_entry->dev_entry = dev_entry;
+				ns_entry->ns = ns;
 
-			nvmed_set_user_quota(ns_entry, current_uid(), 100);
+				ns_entry->partno = part->partno;
+				ns_entry->start_sect = part->start_sect;
+				ns_entry->nr_sects = part->nr_sects;
+
+				if(part == &ns->disk->part0)
+					sprintf(dev_name, "nvme%dn%u", DEV_TO_INSTANCE(dev), ns->ns_id);
+				else
+					sprintf(dev_name, "nvme%dn%up%u", DEV_TO_INSTANCE(dev), ns->ns_id, part->partno);
+
+				ns_entry->ns_proc_root = proc_mkdir(dev_name, NVMED_PROC_ROOT);
+				if(!ns_entry->ns_proc_root) {
+					NVMED_ERR("NVMeDirect: Error creating proc directory - %s\n", dev_name);
+					kfree(ns_entry);
+					continue;
+				}
+
+				ns_entry->proc_admin = proc_create_data("admin", S_IRUSR|S_IRGRP|S_IROTH,
+						ns_entry->ns_proc_root, &nvmed_ns_fops, ns_entry);
+
+				if(!ns_entry->proc_admin) {
+					NVMED_ERR("NVMeDirect: Error creating proc admin entry - %s\n", dev_name);
+					proc_remove(ns_entry->ns_proc_root);
+					kfree(ns_entry);
+					continue;
+				}
+
+				INIT_LIST_HEAD(&ns_entry->queue_list);
+				INIT_LIST_HEAD(&ns_entry->user_list);
+
+				list_add(&ns_entry->list, &dev_entry->ns_list);
+
+				nvmed_set_user_quota(ns_entry, current_uid(), 100);
+			}
+			disk_part_iter_exit(&piter);
 		}
 	}
 
