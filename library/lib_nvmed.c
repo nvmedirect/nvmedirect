@@ -546,11 +546,13 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 	
 	pthread_spin_lock(&nvmed->mngt_lock);
 	
-	while(nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND);
-
-	if(nvmed->process_cq_status == TD_STATUS_RUNNING) {
-		nvmed->process_cq_status = TD_STATUS_REQ_SUSPEND;
+	if(nvmed->process_cq_status != TD_STATUS_STOP) {
 		while(nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND);
+	
+		if(nvmed->process_cq_status == TD_STATUS_RUNNING) {
+			nvmed->process_cq_status = TD_STATUS_REQ_SUSPEND;
+			while(nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND);
+		}
 	}
 
 	munmap(nvmed_queue->dbs, PAGE_SIZE * 2);
@@ -588,7 +590,6 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 void* nvmed_process_cq(void *data) {
 	NVMED* nvmed = data;
 	NVMED_QUEUE* nvmed_queue;
-	pthread_mutex_lock(&nvmed->process_cq_mutex);
 
 	while(1) {
 		if(nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND) {
@@ -703,10 +704,11 @@ NVMED* nvmed_open(char* path, int flags) {
 	pthread_spin_init(&nvmed->mngt_lock, 0);
 
 	// PROCESS_CQ THREAD
-	nvmed->process_cq_status = TD_STATUS_REQ_SUSPEND;
+	nvmed->process_cq_status = TD_STATUS_STOP;
+
 	pthread_cond_init(&nvmed->process_cq_cond, NULL);
 	pthread_mutex_init(&nvmed->process_cq_mutex, NULL);
-	pthread_create(&nvmed->process_cq_td, NULL, &nvmed_process_cq, (void*)nvmed);
+	//pthread_create(&nvmed->process_cq_td, NULL, &nvmed_process_cq, (void*)nvmed);
 
 	if(!__FLAG_ISSET(flags, NVMED_NO_CACHE)) {
 		// CACHE
@@ -1688,6 +1690,11 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	pthread_rwlock_unlock(&nvmed->cache_radix_lock);
 	
 	TAILQ_INIT(&temp_head);
+
+	if(nvmed->process_cq_status == TD_STATUS_STOP) {
+		nvmed->process_cq_status = TD_STATUS_REQ_SUSPEND;
+		pthread_create(&nvmed->process_cq_td, NULL, &nvmed_process_cq, (void*)nvmed);
+	}
 
 	//find all in cache?
 	if(find_blocks == io_blocks) {
