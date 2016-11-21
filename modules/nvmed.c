@@ -300,6 +300,7 @@ static int nvmed_get_device_info(NVMED_NS_ENTRY *ns_entry,
 	dev_info.vwc = DEV_TO_VWC(dev);
 	dev_info.start_sect = ns_entry->start_sect;
 	dev_info.nr_sects = ns_entry->nr_sects;
+	dev_info.part_no = ns_entry->partno;
 
 	copy_to_user(u_dev_info, &dev_info, sizeof(dev_info));
 

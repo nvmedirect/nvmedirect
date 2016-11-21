@@ -75,6 +75,8 @@ typedef struct nvmed_device_info {
 
 	unsigned long start_sect;
 	unsigned long nr_sects;
+	int part_no;
+
 } NVMED_DEVICE_INFO;
 #endif
 

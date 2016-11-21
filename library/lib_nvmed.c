@@ -468,6 +468,7 @@ int nvmed_handle_feature_set(NVMED_HANDLE* nvmed_handle, int feature, int value)
 NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
 	int ret;
 	NVMED_QUEUE* nvmed_queue;
+	char pathBase[1024];
 	char pathBuf[1024];
 	u32 *q_dbs;
 	u32	qid;
@@ -487,23 +488,29 @@ NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
 	nvmed_queue->flags = flags;
 	nvmed_queue->qid = qid;
 	
-	/* Map SQ */
-	sprintf(pathBuf, "/proc/nvmed/nvme%dn%d/%d/sq", 
+	if(nvmed->dev_info->part_no != 0) {
+		sprintf(pathBase, "/proc/nvmed/nvme%dn%dp%d/%d",
+			nvmed->dev_info->instance, nvmed->dev_info->ns_id, nvmed->dev_info->part_no, nvmed_queue->qid);
+	}
+	else {
+		sprintf(pathBase, "/proc/nvmed/nvme%dn%d/%d",
 			nvmed->dev_info->instance, nvmed->dev_info->ns_id, nvmed_queue->qid);
+	}
+
+	/* Map SQ */
+	sprintf(pathBuf, "%s/sq", pathBase);
 	nvmed_queue->sq_fd = open(pathBuf, O_RDWR);
 	nvmed_queue->sq_cmds = mmap(0, SQ_SIZE(nvmed->dev_info->q_depth), 
 			PROT_READ | PROT_WRITE, MAP_SHARED, nvmed_queue->sq_fd, 0);
 
 	/* Map CQ */
-	sprintf(pathBuf, "/proc/nvmed/nvme%dn%d/%d/cq", 
-			nvmed->dev_info->instance, nvmed->dev_info->ns_id, nvmed_queue->qid);
+	sprintf(pathBuf, "%s/cq", pathBase);
 	nvmed_queue->cq_fd = open(pathBuf, O_RDWR);
 	nvmed_queue->cqes = mmap(0, CQ_SIZE(nvmed->dev_info->q_depth), 
 			PROT_READ | PROT_WRITE, MAP_SHARED, nvmed_queue->cq_fd, 0);
 
 	/* Map DQ */
-	sprintf(pathBuf, "/proc/nvmed/nvme%dn%d/%d/db", 
-			nvmed->dev_info->instance, nvmed->dev_info->ns_id, nvmed_queue->qid);
+	sprintf(pathBuf, "%s/db", pathBase);
 	nvmed_queue->db_fd = open(pathBuf, O_RDWR);
 	nvmed_queue->dbs = mmap(0, PAGE_SIZE*2, PROT_READ | PROT_WRITE, MAP_SHARED, nvmed_queue->db_fd, 0);
 
@@ -1279,9 +1286,10 @@ ssize_t nvmed_cache_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, NVMED_CACHE *__
 }
 
 bool nvmed_rw_verify_area(NVMED_HANDLE* nvmed_handle, 
-		unsigned long start_lba, unsigned int len) {
+		unsigned long __start_lba, unsigned int len) {
 	NVMED *nvmed = HtoD(nvmed_handle);
 	NVMED_DEVICE_INFO *dev_info = nvmed->dev_info;
+	unsigned long start_lba = nvmed->dev_info->start_sect + __start_lba;
 
 	if(start_lba < dev_info->start_sect)
 		return false;
