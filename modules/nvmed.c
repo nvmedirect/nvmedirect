@@ -533,19 +533,25 @@ static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 	spin_lock(&dev_entry->ctrl_lock);
 
 	//check quota
-	if(!nvmed_get_remain_user_quota(ns_entry, current_uid())) 
+	if(!nvmed_get_remain_user_quota(ns_entry, current_uid())) {
+		spin_unlock(&dev_entry->ctrl_lock);
 		return -NVMED_OVERQUOTA;
+	}
 
 	queue_count = dev->queue_count + dev_entry->num_user_queue;
 	//db_bar_size check
 	size = (queue_count+1) * 8 * dev->db_stride;
-	if(size > 4096)
+	if(size > 4096) {
+		spin_unlock(&dev_entry->ctrl_lock);
 		return -NVMED_EXCEEDLIMIT;
+	}
 
 	//set_queue_count
 	result = set_queue_count(dev_entry, queue_count);
-	if(result <= queue_count)
+	if(result <= queue_count) {
+		spin_unlock(&dev_entry->ctrl_lock);
 		return -NVMED_EXCEEDLIMIT;
+	}
 
 	//user_queue_entry create
 	queue = kzalloc(sizeof(*queue), GFP_KERNEL);
