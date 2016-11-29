@@ -548,7 +548,7 @@ static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 
 	//set_queue_count
 	result = set_queue_count(dev_entry, queue_count);
-	if(result <= queue_count) {
+	if(result < queue_count) {
 		spin_unlock(&dev_entry->ctrl_lock);
 		return -NVMED_EXCEEDLIMIT;
 	}
