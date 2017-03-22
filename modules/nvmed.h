@@ -71,6 +71,16 @@
 		#define KERN_480
 		#include "nvme.h"
 	#endif
+	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,9,0)
+		#define KERN_490
+		#include "nvme.h"
+	#endif
+	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,10,0)
+		#define KERN_4100
+		#define NVME_CQ_RESULT_IN_UNION
+		#include "nvme.h"
+	#endif
+
 	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,5,0)
 		#define COMPACT_BLKMQ_REQ_ALLOC
 
@@ -94,6 +104,17 @@
 	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,6,0)
 		#define NVME_ADMIN_CMD_SUBMIT_WITH_CQE
 	#endif
+	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,8,0)
+		#define features_prp1(c)	c.features.dptr.prp1
+	#else
+		#define features_prp1(c)	c.features.prp1
+	#endif
+
+	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,10,0)
+		#undef DEV_TO_STRIPESIZE
+		#define DEV_TO_STRIPESIZE(dev) (dev->ctrl.max_hw_sectors << 8)
+	#endif
+
 	#define	DEV_FROM_NVMe(nvme_dev)	nvme_dev->dev
 	#define BLK_RQ_DEVICE_CMD_TYPE	REQ_TYPE_DRV_PRIV
 	#define NVME_SUPPORT_BLOCK_MQ

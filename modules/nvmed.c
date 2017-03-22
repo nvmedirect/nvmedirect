@@ -75,7 +75,11 @@ int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd,
 		blk_rq_unmap_user(bio);
 	if (result) {
 #ifdef NVME_ADMIN_CMD_SUBMIT_WITH_CQE
+	#ifdef NVME_CQ_RESULT_IN_UNION
+		*result = le32_to_cpu(cqe.result.u32);
+	#else
 		*result = le32_to_cpu(cqe.result);
+	#endif
 #else
 		*result = (u32)(uintptr_t)req->special;
 #endif
@@ -116,11 +120,7 @@ static int nvmed_set_features(NVMED_DEV_ENTRY *dev_entry, unsigned fid, unsigned
 	
 	memset(&c, 0, sizeof(c));
 	c.features.opcode = nvme_admin_set_features;
-#ifdef KERN_480
-	c.features.dptr.prp1 = cpu_to_le64(dma_addr);
-#else
-	c.features.prp1 = cpu_to_le64(dma_addr);
-#endif
+	features_prp1(c) = cpu_to_le64(dma_addr);
 	c.features.fid = cpu_to_le32(fid);
 	c.features.dword11 = cpu_to_le32(dword11);
 
