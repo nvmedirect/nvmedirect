@@ -24,107 +24,33 @@
 #include <linux/string.h>
 #include <linux/proc_fs.h>
 #include <linux/genhd.h>
-
+#include <linux/kallsyms.h>
 #include "./nvmed.h"
 #include "../include/nvmed.h"
 
-#ifdef NVME_SUPPORT_BLOCK_MQ
-/* Submit SYNC Command for MQ support NVMe Driver */
+int (*nvmed_submit_cmd_mq)(struct request_queue *q, struct nvme_command *cmd,
+		void *buf, unsigned bufflen) = NULL;
+int (*nvmed_submit_cmd)(struct nvme_dev *, struct nvme_command *, 
+		u32 *result) = NULL;
+
 int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd, 
 		void* buffer, unsigned bufflen, u32 *result) {
-	struct request_queue* q = DEV_TO_ADMINQ(dev);
-	bool write = cmd->common.opcode & 1;
-	struct bio *bio = NULL;
-	struct request *req;
-	int ret;
-#ifdef NVME_ADMIN_CMD_SUBMIT_WITH_CQE
-	struct nvme_completion cqe;
-#endif
+	int ret = 0;
 
-#ifdef COMPACT_BLKMQ_REQ_ALLOC
-	req = blk_mq_alloc_request(q, write, GFP_KERNEL);
-#else
-	req = blk_mq_alloc_request(q, write, GFP_KERNEL, false);
-#endif
-	if (IS_ERR(req))
-		return PTR_ERR(req);
-
-	req->cmd_type = BLK_RQ_DEVICE_CMD_TYPE;
-	req->cmd_flags |= REQ_FAILFAST_DRIVER;
-	req->__data_len = 0;
-	req->__sector = (sector_t) -1;
-	req->bio = req->biotail = NULL;
-
-	req->timeout = ADMIN_TIMEOUT;
-
-	req->cmd = (unsigned char *)cmd;
-	req->cmd_len = sizeof(struct nvme_command);
-	req->special = (void *)0;
-#ifdef NVME_ADMIN_CMD_SUBMIT_WITH_CQE
-	req->special = &cqe;
-#endif
-
-	if (buffer && bufflen) {
-		ret = blk_rq_map_kern(q, req, buffer, bufflen, __GFP_WAIT);
-		if (ret)
-			goto out;
+	if(nvmed_submit_cmd) {
+		ret = 0;
+		ret = nvmed_submit_cmd(dev, cmd, result);
 	}
-
-	blk_execute_rq(req->q, NULL, req, 0);
-	if (bio)
-		blk_rq_unmap_user(bio);
-	if (result) {
-#ifdef NVME_ADMIN_CMD_SUBMIT_WITH_CQE
-	#ifdef NVME_CQ_RESULT_IN_UNION
-		*result = le32_to_cpu(cqe.result.u32);
-	#else
-		*result = le32_to_cpu(cqe.result);
-	#endif
-#else
-		*result = (u32)(uintptr_t)req->special;
-#endif
+	else {
+		ret = nvmed_submit_cmd_mq(DEV_TO_ADMINQ(dev), cmd, buffer, bufflen);
 	}
-
-	ret = req->errors;
- out:
-	blk_mq_free_request(req);
 	return ret;
-
 }
-#else
-#include <linux/kallsyms.h>
-int (*nvmed_submit_admin_cmd)(struct nvme_dev *, struct nvme_command *, u32 *) = NULL;
-
-static int
-nvmed_symbol_walk_callback(void *data, const char *name, struct module *mod, 
-			unsigned long addr)
-{
-	if (strcmp(name, "nvme_submit_admin_cmd") == 0) {
-		nvmed_submit_admin_cmd = (typeof(nvmed_submit_admin_cmd))addr;
-		return NVMED_SUCCESS;
-	}
-	return 0;
-}
-
-int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd, 
-		void* buffer, unsigned bufflen, u32 *result) {
-	return nvmed_submit_admin_cmd(dev, cmd, result);
-}
-#endif
 
 static int nvmed_set_features(NVMED_DEV_ENTRY *dev_entry, unsigned fid, unsigned dword11,
 					dma_addr_t dma_addr, u32 *result)
 {
-	struct nvme_command c;
-	struct nvme_dev *dev = dev_entry->dev;
-	
-	memset(&c, 0, sizeof(c));
-	c.features.opcode = nvme_admin_set_features;
-	features_prp1(c) = cpu_to_le64(dma_addr);
-	c.features.fid = cpu_to_le32(fid);
-	c.features.dword11 = cpu_to_le32(dword11);
-
-	return nvmed_submit_sync_cmd(dev, &c, NULL, 0, result);
+	return NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result);
 }
 
 static int set_queue_count(NVMED_DEV_ENTRY *dev_entry, int count)
@@ -545,7 +471,6 @@ static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 		spin_unlock(&dev_entry->ctrl_lock);
 		return -NVMED_EXCEEDLIMIT;
 	}
-
 	//set_queue_count
 	result = set_queue_count(dev_entry, queue_count);
 	if(result < queue_count) {
@@ -569,6 +494,7 @@ static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 	if(result) {
 		goto result_error;
 	}
+
 	//create proc entry
 	sprintf(dentry_buf, "%d", qid);
 	queue->queue_proc_root = proc_mkdir(dentry_buf, ns_entry->ns_proc_root);
@@ -778,14 +704,34 @@ static NVMED_RESULT nvmed_scan_device(void) {
 		return -NVMED_FAULT;
 	}
 
-#ifndef NVME_SUPPORT_BLOCK_MQ
-	ret = kallsyms_on_each_symbol(nvmed_symbol_walk_callback, NULL);
-	if(nvmed_submit_admin_cmd == NULL)
+	ret = kallsyms_lookup_name("nvme_submit_admin_cmd");
+	if(ret) {
+		nvmed_submit_cmd = (typeof(nvmed_submit_cmd))(uintptr_t)ret;
+	}
+	else {
+		ret = kallsyms_lookup_name("nvme_submit_sync_cmd");
+		if(ret) {
+			nvmed_submit_cmd_mq = (typeof(nvmed_submit_cmd_mq))(uintptr_t)ret;
+		}
+	}
+	
+	if(!ret) {
+		NVMED_ERR("NVMeDirect: Can not find Symbol [nvme_submit_admin_cmd]\n");
 		return -NVMED_FAULT;
-#endif
+	}
+
+	ret = kallsyms_lookup_name("nvme_set_features");
+	if(!ret) {
+		NVMED_ERR("NVMeDirect: Can not find Symbol [nvme_set_features]\n");
+		return -NVMED_FAULT;
+	}
+	nvmed_set_features_fn = (typeof(nvmed_set_features_fn))(uintptr_t)ret;
 
 	NVMED_PROC_ROOT = proc_mkdir("nvmed", NULL);
-	if(!NVMED_PROC_ROOT) return -NVMED_FAULT;
+	if(!NVMED_PROC_ROOT) {
+		NVMED_ERR("NVMeDirect: Fail to create proc entry\n");
+		return -NVMED_FAULT;
+	}
 
 	while ((pdev = pci_get_class(PCI_CLASS_NVME, pdev))) {
 		dev = pci_get_drvdata(pdev);

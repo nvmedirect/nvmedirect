@@ -77,13 +77,10 @@
 	#endif
 	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,10,0)
 		#define KERN_4100
-		#define NVME_CQ_RESULT_IN_UNION
 		#include "nvme.h"
 	#endif
 
 	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,5,0)
-		#define COMPACT_BLKMQ_REQ_ALLOC
-
 		#undef DEV_TO_ADMINQ
 		#undef NS_TO_DEV
 		#undef DEV_TO_INSTANCE
@@ -101,9 +98,6 @@
 		#define DEV_TO_NS_LIST(dev) dev->ctrl.namespaces
 
 	#endif
-	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,6,0)
-		#define NVME_ADMIN_CMD_SUBMIT_WITH_CQE
-	#endif
 	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,8,0)
 		#define features_prp1(c)	c.features.dptr.prp1
 	#else
@@ -117,7 +111,25 @@
 
 	#define	DEV_FROM_NVMe(nvme_dev)	nvme_dev->dev
 	#define BLK_RQ_DEVICE_CMD_TYPE	REQ_TYPE_DRV_PRIV
-	#define NVME_SUPPORT_BLOCK_MQ
+#endif
+
+//NVME_SET_FEATURES
+#if KERNEL_VERSION_CODE < KERNEL_VERSION(4,5,0)
+	#define NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result) \
+				nvmed_set_features_fn(dev_entry->dev, fid, dword11, dma_addr, result)
+	int (*nvmed_set_features_fn)(struct nvme_dev *dev, unsigned fid, unsigned dword11,
+		dma_addr_t dma_addr, u32 *result) = NULL;
+#elif KERNEL_VERSION_CODE < KERNEL_VERSION(4,9,0)
+	#define NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result) \
+				nvmed_set_features_fn(&dev_entry->dev->ctrl, fid, dword11, dma_addr, result)
+	int (*nvmed_set_features_fn)(struct nvme_ctrl *dev, unsigned fid, unsigned dword11,
+		dma_addr_t dma_addr, u32 *result) = NULL;
+#else
+	#define NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result) \
+				nvmed_set_features_fn(&dev_entry->dev->ctrl, fid, dword11, NULL, 0, result)
+	int (*nvmed_set_features_fn)(struct nvme_ctrl *dev, unsigned fid, unsigned dword11,
+		void *buffer, size_t buflen, u32 *result) = NULL;
+
 #endif
 
 #define TRUE	1
