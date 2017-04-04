@@ -15,6 +15,7 @@
  */
 
 #include "../include/nvmed.h"
+#include "../include/nvme_hdr.h"
 #include "../include/lib_nvmed.h"
 #include "../include/radix-tree.h"
 #include <stdio.h>

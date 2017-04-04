@@ -27,7 +27,6 @@ extern "C" {
 #include <pthread.h>
 #include <sys/queue.h>
 #include <pthread.h>
-#include <linux/nvme.h>
 #include "./radix-tree.h"
 #include <stdbool.h>
 

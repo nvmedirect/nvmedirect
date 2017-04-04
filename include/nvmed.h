@@ -18,7 +18,6 @@
 #define _NVMED_H
 
 #include <linux/types.h>
-#include <linux/nvme.h>
 
 #ifndef MODULE
 #include <sys/types.h>
