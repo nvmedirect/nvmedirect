@@ -18,13 +18,9 @@
 #define _NVMED_MODULE_H
 
 #include <linux/list.h>
-#include <linux/nvme.h>
 #include <linux/kthread.h>
 #include <linux/version.h>
 #include <linux/blkdev.h>
-
-#define SQ_SIZE(depth)		(depth * sizeof(struct nvme_command))
-#define CQ_SIZE(depth)		(depth * sizeof(struct nvme_completion))
 
 #define NVMED_ERR(string, args...) printk(KERN_ERR string, ##args)
 #define NVMED_INFO(string, args...) printk(KERN_INFO string, ##args)
@@ -48,9 +44,6 @@
 	#define	DEV_FROM_NVMe(nvme_dev)	&nvme_dev->pci_dev->dev
 	#define BLK_RQ_DEVICE_CMD_TYPE	REQ_TYPE_SPECIAL
 #else
-	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,4,0)
-		#define __GFP_WAIT __GFP_DIRECT_RECLAIM
-	#endif
 	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,4,0)
 		#define KERN_440
 		#include "nvme.h"
@@ -98,11 +91,6 @@
 		#define DEV_TO_NS_LIST(dev) dev->ctrl.namespaces
 
 	#endif
-	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,8,0)
-		#define features_prp1(c)	c.features.dptr.prp1
-	#else
-		#define features_prp1(c)	c.features.prp1
-	#endif
 
 	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,10,0)
 		#undef DEV_TO_STRIPESIZE
@@ -131,6 +119,18 @@
 		void *buffer, size_t buflen, u32 *result) = NULL;
 
 #endif
+
+#if KERNEL_VERSION_CODE < KERNEL_VERSION(3,19,0)
+	#undef DEV_TO_ADMINQ
+	#define DEV_TO_ADMINQ(dev) dev
+	int (*nvmed_submit_cmd_mq)(void *x, ...);
+#else
+	int (*nvmed_submit_cmd_mq)(struct request_queue *q, struct nvme_command *cmd,
+		void *buf, unsigned bufflen) = NULL;
+
+#endif
+int (*nvmed_submit_cmd)(struct nvme_dev *, struct nvme_command *, 
+		u32 *result) = NULL;
 
 #define TRUE	1
 #define FALSE	0

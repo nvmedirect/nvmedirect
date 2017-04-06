@@ -28,17 +28,11 @@
 #include "./nvmed.h"
 #include "../include/nvmed.h"
 
-int (*nvmed_submit_cmd_mq)(struct request_queue *q, struct nvme_command *cmd,
-		void *buf, unsigned bufflen) = NULL;
-int (*nvmed_submit_cmd)(struct nvme_dev *, struct nvme_command *, 
-		u32 *result) = NULL;
-
 int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd, 
 		void* buffer, unsigned bufflen, u32 *result) {
 	int ret = 0;
 
 	if(nvmed_submit_cmd) {
-		ret = 0;
 		ret = nvmed_submit_cmd(dev, cmd, result);
 	}
 	else {
@@ -149,7 +143,6 @@ static int adapter_alloc_sq(NVMED_DEV_ENTRY *dev_entry, u16 qid,
 
 	return nvmed_submit_sync_cmd(dev, &c, NULL, 0, NULL);
 }
-
 
 static int nvmed_create_queue(NVMED_QUEUE_ENTRY *queue_entry, int qid) {
 	NVMED_DEV_ENTRY *dev_entry = queue_entry->ns_entry->dev_entry;
