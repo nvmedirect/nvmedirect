@@ -23,9 +23,6 @@
 #include <sys/types.h>
 #endif
 
-#define true	1
-#define false	0
-
 #define NVMED_IOCTL_NVMED_INFO		_IOW('N', 0x50, struct nvmed_device_info)
 #define NVMED_IOCTL_QUEUE_CREATE	_IOR('N', 0x51, unsigned int)
 #define NVMED_IOCTL_QUEUE_DELETE	_IOW('N', 0x52, unsigned int)
@@ -38,7 +35,6 @@
 #define SQ_SIZE(depth)		(depth * sizeof(struct nvme_command))
 #define CQ_SIZE(depth)		(depth * sizeof(struct nvme_completion))
 
-typedef _Bool bool;
 typedef __u64 u64;
 typedef __u32 u32;
 typedef __u16 u16;
@@ -59,8 +55,6 @@ typedef struct nvmed_buf {
 	u64* pfnList;
 } NVMED_BUF;
 
-#ifndef _NVMED_DEV_INFO_
-#define _NVMED_DEV_INFO_
 typedef struct nvmed_device_info {
 	int instance;
 	int lba_shift;
@@ -77,7 +71,6 @@ typedef struct nvmed_device_info {
 	int part_no;
 
 } NVMED_DEVICE_INFO;
-#endif
 
 typedef struct nvmed_user_quota {
 	uid_t uid;

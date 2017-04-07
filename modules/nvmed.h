@@ -22,6 +22,9 @@
 #include <linux/version.h>
 #include <linux/blkdev.h>
 
+#include "../include/nvmed.h"
+#include "../include/nvme_hdr.h"
+
 #define NVMED_ERR(string, args...) printk(KERN_ERR string, ##args)
 #define NVMED_INFO(string, args...) printk(KERN_INFO string, ##args)
 #define NVMED_DEBUG(string, args...) printk(KERN_DEBUG string, ##args)
@@ -31,18 +34,17 @@
 #define KERNEL_VERSION_CODE	KERNEL_VERSION(KERNEL_VERSION_MAJOR, \
 										KERNEL_VERSION_MINOR, 0)
 
-#define DEV_TO_ADMINQ(dev) dev->admin_q
-#define NS_TO_DEV(ns) ns->dev
+#define	DEV_ENTRY_TO_DEVICE(dev_entry) &dev_entry->pdev->dev
+#define NS_ENTRY_TO_DEV(ns_entry) ns_entry->dev_entry->dev
+
 #define DEV_TO_INSTANCE(dev) dev->instance
 #define DEV_TO_HWSECTORS(dev) dev->max_hw_sectors
 #define DEV_TO_STRIPESIZE(dev) dev->stripe_size
 #define DEV_TO_VWC(dev) dev->vwc
-#define DEV_TO_NS_LIST(dev) dev->namespaces
 
-/* Legacy struct NVMe, BLK_MQ->REQ_TYPE */
-#if KERNEL_VERSION_CODE < KERNEL_VERSION(4,2,0)
-	#define	DEV_FROM_NVMe(nvme_dev)	&nvme_dev->pci_dev->dev
-#else
+#define DEV_TO_ADMINQ(dev) dev->admin_q
+#define DEV_TO_NS_LIST(dev) dev->namespaces
+#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,2,0)
 	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,4,0)
 		#define KERN_440
 		#include "nvme.h"
@@ -74,7 +76,6 @@
 
 	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,5,0)
 		#undef DEV_TO_ADMINQ
-		#undef NS_TO_DEV
 		#undef DEV_TO_INSTANCE
 		#undef DEV_TO_HWSECTORS
 		#undef DEV_TO_STRIPESIZE
@@ -82,7 +83,6 @@
 		#undef DEV_TO_NS_LIST
 
 		#define DEV_TO_ADMINQ(dev) dev->ctrl.admin_q
-		#define NS_TO_DEV(ns) container_of(ns->ctrl, struct nvme_dev, ctrl)
 		#define DEV_TO_INSTANCE(dev) dev->ctrl.instance
 		#define DEV_TO_HWSECTORS(dev) dev->ctrl.max_hw_sectors
 		#define DEV_TO_STRIPESIZE(dev) dev->ctrl.stripe_size
@@ -95,8 +95,6 @@
 		#undef DEV_TO_STRIPESIZE
 		#define DEV_TO_STRIPESIZE(dev) (dev->ctrl.max_hw_sectors << 8)
 	#endif
-
-	#define	DEV_FROM_NVMe(nvme_dev)	nvme_dev->dev
 #endif
 
 //NVME_SET_FEATURES
@@ -178,6 +176,7 @@ typedef struct nvmed_user_quota_entry {
 
 typedef struct nvmed_dev_entry {
 	struct nvme_dev *dev;
+	struct pci_dev *pdev;
 
 	spinlock_t ctrl_lock;
 

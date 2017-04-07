@@ -18,7 +18,6 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/pci.h>
-#include <linux/nvme.h>
 #include <linux/printk.h>
 #include <linux/sysfs.h>
 #include <linux/string.h>
@@ -26,7 +25,6 @@
 #include <linux/genhd.h>
 #include <linux/kallsyms.h>
 #include "./nvmed.h"
-#include "../include/nvmed.h"
 
 int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd, 
 		void* buffer, unsigned bufflen, u32 *result) {
@@ -52,14 +50,13 @@ static int set_queue_count(NVMED_DEV_ENTRY *dev_entry, int count)
 	int status;
 	u32 result = 0;
 	u32 q_count = (count - 1) | ((count - 1) << 16);
-	struct nvme_dev *dev = dev_entry->dev;
 
 	status = nvmed_set_features(dev_entry, NVME_FEAT_NUM_QUEUES, q_count, 0,
 								&result);
 	if (status < 0)
 		return status;
 	if (status > 0) {
-		dev_err(DEV_FROM_NVMe(dev), "Could not set queue count (%d)\n", status);
+		dev_err(DEV_ENTRY_TO_DEVICE(dev_entry), "Could not set queue count (%d)\n", status);
 		return 0;
 	}
 	return min(result & 0xffff, result >> 16) + 1;
@@ -71,17 +68,17 @@ static struct nvme_queue *nvmed_alloc_queue(NVMED_DEV_ENTRY *dev_entry, int qid,
 	
 	if(!nvmeq) return NULL;
 
-	nvmeq->cqes = dma_zalloc_coherent(DEV_FROM_NVMe(dev), CQ_SIZE(depth),
+	nvmeq->cqes = dma_zalloc_coherent(DEV_ENTRY_TO_DEVICE(dev_entry), CQ_SIZE(depth),
 							&nvmeq->cq_dma_addr, GFP_KERNEL);
 	if(!nvmeq->cqes)
 		goto free_nvmeq;
 
-	nvmeq->sq_cmds = dma_zalloc_coherent(DEV_FROM_NVMe(dev), SQ_SIZE(depth),
+	nvmeq->sq_cmds = dma_zalloc_coherent(DEV_ENTRY_TO_DEVICE(dev_entry), SQ_SIZE(depth),
 							&nvmeq->sq_dma_addr, GFP_KERNEL);
 	if(!nvmeq->sq_cmds)
 		goto free_cqdma;
 
-	nvmeq->q_dmadev = DEV_FROM_NVMe(dev);
+	nvmeq->q_dmadev = DEV_ENTRY_TO_DEVICE(dev_entry);
 	nvmeq->dev = dev;
 	spin_lock_init(&nvmeq->q_lock);
 	nvmeq->cq_head = 0;
@@ -93,7 +90,7 @@ static struct nvme_queue *nvmed_alloc_queue(NVMED_DEV_ENTRY *dev_entry, int qid,
 	return nvmeq;
 
 free_cqdma:
-	dma_free_coherent(DEV_FROM_NVMe(dev), CQ_SIZE(depth), (void *)nvmeq->cqes, 
+	dma_free_coherent(DEV_ENTRY_TO_DEVICE(dev_entry), CQ_SIZE(depth), (void *)nvmeq->cqes, 
 						nvmeq->cq_dma_addr);	
 free_nvmeq:
 	kfree(nvmeq);
@@ -202,7 +199,7 @@ static NVMED_USER_QUOTA_ENTRY* nvmed_get_user_quota(NVMED_NS_ENTRY *ns_entry, ku
 static int nvmed_get_device_info(NVMED_NS_ENTRY *ns_entry, 
 								NVMED_DEVICE_INFO __user *u_dev_info) {
 	struct nvme_ns *ns = ns_entry->ns;
-	struct nvme_dev *dev = NS_TO_DEV(ns);
+	struct nvme_dev *dev = NS_ENTRY_TO_DEV(ns_entry);
 	struct nvmed_device_info dev_info;
 	
 	if(nvmed_get_user_quota(ns_entry, current_uid()) < 0)
@@ -375,13 +372,13 @@ static int nvmed_queue_proc_open(struct inode *inode, struct file *filp) {
 
 static int nvmed_queue_db_proc_mmap(struct file *filp, struct vm_area_struct *vma) {
 	NVMED_QUEUE_ENTRY *queue_entry = PDE_DATA(filp->f_inode);
-	struct nvme_dev *dev;
+	NVMED_DEV_ENTRY *dev_entry;
 	struct pci_dev *pdev;
 	int ret = -1;
 
-	dev = queue_entry->ns_entry->dev_entry->dev;
+	dev_entry = queue_entry->ns_entry->dev_entry;
 
-	pdev = to_pci_dev(DEV_FROM_NVMe(dev));
+	pdev = to_pci_dev(DEV_ENTRY_TO_DEVICE(dev_entry));
 	
 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	ret = io_remap_pfn_range(vma, vma->vm_start, pci_resource_start(pdev,0) >> PAGE_SHIFT,
@@ -439,8 +436,7 @@ static const struct file_operations nvme_queue_cq_fops = {
 
 static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__qid) {
 	NVMED_DEV_ENTRY *dev_entry = ns_entry->dev_entry;
-	struct nvme_ns *ns = ns_entry->ns;
-	struct nvme_dev *dev = NS_TO_DEV(ns);
+	struct nvme_dev *dev = NS_ENTRY_TO_DEV(ns_entry);
 	unsigned int queue_count;
 	NVMED_QUEUE_ENTRY *queue;
 	size_t size;
@@ -732,6 +728,7 @@ static NVMED_RESULT nvmed_scan_device(void) {
 
 		dev_entry = kzalloc(sizeof(*dev_entry), GFP_KERNEL);
 		dev_entry->dev = dev;
+		dev_entry->pdev = pdev;
 		dev_entry->num_user_queue = 0;
 
 		spin_lock_init(&dev_entry->ctrl_lock);
