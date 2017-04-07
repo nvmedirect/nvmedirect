@@ -57,9 +57,6 @@ extern "C" {
 #define DEC_SYNC(obj)	__sync_sub_and_fetch(&obj, 1);
 #define INIT_SYNC(obj)	__sync_and_and_fetch(&obj, 0);
 
-#define true	1
-#define false	0
-
 typedef __u64 u64;
 typedef __u32 u32;
 typedef __u16 u16;
