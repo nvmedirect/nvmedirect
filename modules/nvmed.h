@@ -194,7 +194,8 @@ typedef struct nvmed_ns_entry {
 	
 	struct proc_dir_entry *ns_proc_root;
 	struct proc_dir_entry *proc_admin;
-	
+	struct proc_dir_entry *proc_sysfs_link;
+
 	struct list_head list;
 
 	struct list_head queue_list;

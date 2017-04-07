@@ -681,10 +681,13 @@ static NVMED_RESULT nvmed_scan_device(void) {
 	char dev_name[32];
 	int i;
 	int ret;
-	
 	/* for Partition support */
 	struct disk_part_iter piter;
 	struct hd_struct *part;
+	/* for sysfs link */
+	struct kobject *kobj;
+	char *tempPath;
+	char *sysfsPath;
 
 	ret = request_module("nvme");
 
@@ -722,10 +725,28 @@ static NVMED_RESULT nvmed_scan_device(void) {
 		return -NVMED_FAULT;
 	}
 
+	tempPath = kzalloc(sizeof(char) * 1024, GFP_KERNEL);
+	sysfsPath = kzalloc(sizeof(char) * 1024, GFP_KERNEL);
+
 	while ((pdev = pci_get_class(PCI_CLASS_NVME, pdev))) {
 		dev = pci_get_drvdata(pdev);
 		if(dev == NULL) continue;
 
+		//////////////
+		// Create Sysfs symlink destination path
+		memset(tempPath, 0x0, 1024);
+		memset(sysfsPath, 0x0, 1024);
+
+		kobj = &pdev->dev.kobj;
+		while(kobj != NULL) {
+			snprintf(tempPath, strlen(sysfsPath) + strlen(kobj->name)+2, "/%s%s", kobj->name, sysfsPath);
+			memcpy(sysfsPath, tempPath, strlen(tempPath)+1);
+			kobj = kobj->parent;
+		}
+		snprintf(tempPath, strlen(sysfsPath) + 5, "/%s%s", "sys", sysfsPath);
+		memcpy(sysfsPath, tempPath, strlen(tempPath)+1);
+		//////////////
+		
 		dev_entry = kzalloc(sizeof(*dev_entry), GFP_KERNEL);
 		dev_entry->dev = dev;
 		dev_entry->pdev = pdev;
@@ -775,6 +796,11 @@ static NVMED_RESULT nvmed_scan_device(void) {
 					kfree(ns_entry);
 					continue;
 				}
+				
+				ns_entry->proc_sysfs_link = proc_symlink("sysfs", ns_entry->ns_proc_root, sysfsPath);
+				if(!ns_entry->proc_sysfs_link) {
+					NVMED_ERR("NVMeDirect: Error creating symlink - %s sysfs -> %s\n", dev_name, sysfsPath);
+				}
 
 				INIT_LIST_HEAD(&ns_entry->queue_list);
 				INIT_LIST_HEAD(&ns_entry->user_list);
@@ -785,7 +811,10 @@ static NVMED_RESULT nvmed_scan_device(void) {
 			}
 			disk_part_iter_exit(&piter);
 		}
+		
 	}
+	kfree(tempPath);
+	kfree(sysfsPath);
 
 	return NVMED_SUCCESS;
 }
