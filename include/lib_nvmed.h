@@ -21,6 +21,7 @@
 extern "C" {
 #endif
 
+#include <unistd.h>
 #include <linux/types.h>
 #include <sys/types.h>
 #include <sys/queue.h>
@@ -136,6 +137,7 @@ typedef struct nvmed_device_info NVMED_DEVICE_INFO;
 typedef struct nvmed {
 	char*	ns_path;
 	int 	ns_fd;
+	int		dev_fd;			// Added for nvmed_info
 	u32 	flags;
 	
 	NVMED_DEVICE_INFO *dev_info;
