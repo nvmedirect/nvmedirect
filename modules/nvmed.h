@@ -101,19 +101,30 @@
 #if KERNEL_VERSION_CODE < KERNEL_VERSION(4,5,0)
 	#define NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result) \
 				nvmed_set_features_fn(dev_entry->dev, fid, dword11, dma_addr, result)
+	#define NVMED_GET_FEATURES(dev_entry, fid, result) \
+				nvmed_get_features_fn(dev_entry->dev, fid, 0, 0, result)
 	int (*nvmed_set_features_fn)(struct nvme_dev *dev, unsigned fid, unsigned dword11,
+		dma_addr_t dma_addr, u32 *result) = NULL;
+	int (*nvmed_get_features_fn)(struct nvme_dev *dev, unsigned fid, unsigned nsid,
 		dma_addr_t dma_addr, u32 *result) = NULL;
 #elif KERNEL_VERSION_CODE < KERNEL_VERSION(4,9,0)
 	#define NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result) \
 				nvmed_set_features_fn(&dev_entry->dev->ctrl, fid, dword11, dma_addr, result)
+	#define NVMED_GET_FEATURES(dev_entry, fid, result) \
+				nvmed_get_features_fn(&dev_entry->dev->ctrl, fid, 0, 0, result)
 	int (*nvmed_set_features_fn)(struct nvme_ctrl *dev, unsigned fid, unsigned dword11,
+		dma_addr_t dma_addr, u32 *result) = NULL;
+	int (*nvmed_get_features_fn)(struct nvme_ctrl *dev, unsigned fid, unsigned nsid,
 		dma_addr_t dma_addr, u32 *result) = NULL;
 #else
 	#define NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result) \
 				nvmed_set_features_fn(&dev_entry->dev->ctrl, fid, dword11, NULL, 0, result)
+	#define NVMED_GET_FEATURES(dev_entry, fid, result) \
+				nvmed_get_features_fn(&dev_entry->dev->ctrl, fid, 0, NULL, 0, result)
 	int (*nvmed_set_features_fn)(struct nvme_ctrl *dev, unsigned fid, unsigned dword11,
 		void *buffer, size_t buflen, u32 *result) = NULL;
-
+	int (*nvmed_get_features_fn)(struct nvme_ctrl *dev, unsigned fid, unsigned nsid,
+		void *buffer, size_t buflen, u32 *result) = NULL;
 #endif
 
 #if KERNEL_VERSION_CODE < KERNEL_VERSION(3,19,0)

@@ -39,13 +39,34 @@ int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd,
 	return ret;
 }
 
+static int nvmed_get_features(NVMED_DEV_ENTRY *dev_entry, unsigned fid, u32 *result)
+{
+	return NVMED_GET_FEATURES(dev_entry, fid, result);
+}
+
 static int nvmed_set_features(NVMED_DEV_ENTRY *dev_entry, unsigned fid, unsigned dword11,
 					dma_addr_t dma_addr, u32 *result)
 {
 	return NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result);
 }
 
-static int set_queue_count(NVMED_DEV_ENTRY *dev_entry, int count)
+static int get_queue_count(NVMED_DEV_ENTRY *dev_entry)
+{
+	int status;
+	u32 result = 0;
+
+	status = nvmed_get_features(dev_entry, NVME_FEAT_NUM_QUEUES, &result);
+	
+	if (status < 0)
+		return status;
+	if (status > 0) {
+		dev_err(DEV_ENTRY_TO_DEVICE(dev_entry), "Could not set queue count (%d)\n", status);
+		return 0;
+	}
+	return min(result & 0xffff, result >> 16) + 1;
+}
+
+static int set_queue_count(NVMED_DEV_ENTRY *dev_entry, int count, int *err)
 {
 	int status;
 	u32 result = 0;
@@ -56,7 +77,7 @@ static int set_queue_count(NVMED_DEV_ENTRY *dev_entry, int count)
 	if (status < 0)
 		return status;
 	if (status > 0) {
-		dev_err(DEV_ENTRY_TO_DEVICE(dev_entry), "Could not set queue count (%d)\n", status);
+		*err = status;
 		return 0;
 	}
 	return min(result & 0xffff, result >> 16) + 1;
@@ -442,7 +463,7 @@ static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 	size_t size;
 	char dentry_buf[4];
 	int qid;
-
+	int err;
 	int result;
 
 	spin_lock(&dev_entry->ctrl_lock);
@@ -461,8 +482,18 @@ static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 		return -NVMED_EXCEEDLIMIT;
 	}
 	//set_queue_count
-	result = set_queue_count(dev_entry, queue_count);
+	result = set_queue_count(dev_entry, queue_count, &err);
+	if(result < 0) {
+		NVMED_ERR("NVMeDirect: Error on set queue count\n");
+		spin_unlock(&dev_entry->ctrl_lock);
+		return -NVMED_EXCEEDLIMIT;
+	}
+	else if(result == 0 && err == 6) {
+		result = get_queue_count(dev_entry);
+	}
+
 	if(result < queue_count) {
+		NVMED_ERR("NVMeDirect: Number of queues exceed limit\n");
 		spin_unlock(&dev_entry->ctrl_lock);
 		return -NVMED_EXCEEDLIMIT;
 	}
@@ -718,6 +749,13 @@ static NVMED_RESULT nvmed_scan_device(void) {
 		return -NVMED_FAULT;
 	}
 	nvmed_set_features_fn = (typeof(nvmed_set_features_fn))(uintptr_t)ret;
+
+	ret = kallsyms_lookup_name("nvme_get_features");
+	if(!ret) {
+		NVMED_ERR("NVMeDirect: Can not find Symbol [nvme_get_features]\n");
+		return -NVMED_FAULT;
+	}
+	nvmed_get_features_fn = (typeof(nvmed_get_features_fn))(uintptr_t)ret;
 
 	NVMED_PROC_ROOT = proc_mkdir("nvmed", NULL);
 	if(!NVMED_PROC_ROOT) {
