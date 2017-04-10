@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
 	nvmed = nvmed_open(dev_path, 0);
 
 	if(nvmed == NULL) {
-		printf("%s: Cannot open the NVMe device %s\n", ,argv[0], dev_path);
+		printf("%s: Cannot open the NVMe device %s\n", argv[0], dev_path);
 		return -1;
 	}
 	
