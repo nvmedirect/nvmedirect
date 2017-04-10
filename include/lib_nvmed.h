@@ -22,13 +22,11 @@ extern "C" {
 #endif
 
 #include <linux/types.h>
-#include <linux/types.h>
 #include <sys/types.h>
-#include <pthread.h>
 #include <sys/queue.h>
 #include <pthread.h>
-#include "./radix-tree.h"
 #include <stdbool.h>
+#include "./radix-tree.h"
 
 #define PAGE_SIZE		sysconf(_SC_PAGESIZE)
 
