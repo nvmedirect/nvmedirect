@@ -30,10 +30,6 @@
 #define NVMED_IOCTL_GET_USER		_IOWR('N', 0x70, struct nvmed_user_quota)
 #define NVMED_IOCTL_SET_USER		_IOWR('N', 0x71, struct nvmed_user_quota)
 
-// For nvmed_info (borrowed from <linux/nvme_ioctl.h>
-// This ioctl() should be done to nvmed->dev_fd
-#define NVMED_IOCTL_ADMIN_CMD		_IOWR('N', 0x41, struct nvme_admin_cmd)
-
 #define NVMED_CACHE_INIT_NUM_PAGES	2560	
 
 #define SQ_SIZE(depth)		(depth * sizeof(struct nvme_command))

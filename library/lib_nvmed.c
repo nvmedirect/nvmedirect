@@ -703,7 +703,6 @@ NVMED* nvmed_open(char* path, int flags) {
 	// Getting NVMe Device Info
 	nvmed->ns_path = admin_path;
 	nvmed->ns_fd = fd;
-	nvmed->dev_fd = devfd;
 	nvmed->dev_info = dev_info;
 	nvmed->flags = flags;
 
@@ -757,7 +756,6 @@ int nvmed_close(NVMED* nvmed) {
 	if(nvmed->numQueue) return -NVMED_FAULT;
 
 	close(nvmed->ns_fd);
-	close(nvmed->dev_fd);
 
 	free(nvmed->ns_path);
 
