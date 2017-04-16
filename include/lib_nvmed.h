@@ -26,7 +26,6 @@ extern "C" {
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <pthread.h>
-#include <stdbool.h>
 #include "./radix-tree.h"
 
 #define PAGE_SIZE		sysconf(_SC_PAGESIZE)
@@ -42,13 +41,18 @@ extern "C" {
 #define HtoQ(handle) 	handle->queue
 #define HtoD(handle) 	QtoD(HtoQ(handle))
 
+typedef enum {
+	NVMED_FALSE = 0,
+	NVMED_TRUE = 1,
+} NVMED_BOOL;
+
 #define FLAG_SET(obj, items) (obj)->flags |= items
 #define FLAG_SET_FORCE(obj, items) (obj)->flags = items
 #define FLAG_SET_SYNC(obj, items) __sync_or_and_fetch(&obj->flags, items)
 #define FLAG_UNSET(obj, items) (obj)->flags &= ~items
 #define FLAG_UNSET_SYNC(obj, items) __sync_and_and_fetch(&obj->flags, ~items)
-#define __FLAG_ISSET(flags, items) (flags & items)? true:false
-#define __FLAG_ISSET_SYNC(obj , items) __sync_and_and_fetch(&obj->flags, items)? true:false
+#define __FLAG_ISSET(flags, items) (flags & items)? NVMED_TRUE:NVMED_FALSE
+#define __FLAG_ISSET_SYNC(obj , items) __sync_and_and_fetch(&obj->flags, items)? NVMED_TRUE:NVMED_FALSE
 #define FLAG_ISSET(obj, items) __FLAG_ISSET((obj)->flags, items)
 #define FLAG_ISSET_SYNC(obj, items) __FLAG_ISSET_SYNC(obj, items)
 

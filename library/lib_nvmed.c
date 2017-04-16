@@ -66,7 +66,7 @@ int virt_to_phys(NVMED* nvmed, void* addr, u64* paArr, unsigned int num_bytes) {
 /*
  * Allocation cache slot and memory
  */
-int nvmed_cache_alloc(NVMED* nvmed, unsigned int size, bool lazy_init) {
+int nvmed_cache_alloc(NVMED* nvmed, unsigned int size, NVMED_BOOL lazy_init) {
 	int i;
 	unsigned int req_size;
 	NVMED_CACHE_SLOT *slot;
@@ -102,7 +102,7 @@ int nvmed_cache_alloc(NVMED* nvmed, unsigned int size, bool lazy_init) {
 		info = slot->cache_info + i;
 		info->lpaddr = 0;
 		info->ref = 0;
-		if(lazy_init == false) {
+		if(lazy_init == NVMED_FALSE) {
 			info->paddr = paList[i];
 			FLAG_SET(info, CACHE_FREE);
 		}
@@ -1287,23 +1287,23 @@ ssize_t nvmed_cache_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, NVMED_CACHE *__
 	return total_io;
 }
 
-bool nvmed_rw_verify_area(NVMED_HANDLE* nvmed_handle, 
+NVMED_BOOL nvmed_rw_verify_area(NVMED_HANDLE* nvmed_handle,
 		unsigned long __start_lba, unsigned int len) {
 	NVMED *nvmed = HtoD(nvmed_handle);
 	NVMED_DEVICE_INFO *dev_info = nvmed->dev_info;
 	unsigned long start_lba = nvmed->dev_info->start_sect + __start_lba;
 
 	if(start_lba < dev_info->start_sect)
-		return false;
+		return NVMED_FALSE;
 
 	if((dev_info->start_sect + dev_info->nr_sects) < start_lba)
-		return false;
+		return NVMED_FALSE;
 
 	if((dev_info->start_sect + dev_info->nr_sects)
 			< (start_lba + len))
-		return false;
+		return NVMED_FALSE;
 
-	return true;
+	return NVMED_TRUE;
 }
 
 /*
@@ -1682,7 +1682,7 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	unsigned int buf_offs, buf_copy_size, cache_offs;
 	unsigned int  find_blocks;
 	int block_idx=0, cache_idx=0;
-	bool found_from_cache;
+	NVMED_BOOL found_from_cache;
 	TAILQ_HEAD(cache_list, nvmed_cache) temp_head;
 
 	if(!nvmed_rw_verify_area(nvmed_handle, start_lba, len))
@@ -1749,9 +1749,9 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 		cache_idx=0;
 		for(block_idx = start_block; block_idx <= end_block; block_idx++) {
 			cache = *(cacheP + cache_idx);
-			found_from_cache = false;
+			found_from_cache = NVMED_FALSE;
 			if(cache != NULL &&cache->lpaddr == block_idx) {
-				found_from_cache = true;
+				found_from_cache = NVMED_TRUE;
 				TAILQ_REMOVE(&nvmed->lru_head, cache, cache_list);
 			}
 			else {
