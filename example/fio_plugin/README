@@ -1,0 +1,15 @@
+# Pre-requirement
+ 1. NVMeDirect Library
+ 2. FIO version 2.17 or above
+    (You can download from https://github.com/axboe/fio)
+
+# Compile
+ $ make FIO_DIR=<path to FIO Source code>
+
+# Run
+ To use the NVMeDirect fio plugin with fio, simply set the following in the fio configuration file
+ (see example_script.fio in the same directory as this README)
+ ioengine=<path to fio_plugin binary>
+
+ You can run random read benchmark (1 thread, 64 iodepth) using following sample script
+ $ sudo fio ./example_script.fio
