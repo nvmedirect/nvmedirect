@@ -74,6 +74,10 @@
 		#define KERN_4100
 		#include "nvme.h"
 	#endif
+	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,11,0)
+		#define KERN_4110
+		#include "nvme.h"
+	#endif
 
 	#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,5,0)
 		#undef DEV_TO_ADMINQ
