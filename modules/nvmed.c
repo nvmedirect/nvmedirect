@@ -878,6 +878,7 @@ static void __exit nvmed_cleanup(void)
 	list_for_each_entry_safe(dev_entry, dev_next, &nvmed_dev_list, list) {
 		list_for_each_entry_safe(ns_entry, ns_next, &dev_entry->ns_list, list) {
 			proc_remove(ns_entry->proc_admin);
+			proc_remove(ns_entry->proc_sysfs_link);
 			proc_remove(ns_entry->ns_proc_root);
 			list_del(&ns_entry->list);
 			kfree(ns_entry);
