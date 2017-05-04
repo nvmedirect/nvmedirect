@@ -136,6 +136,7 @@ void* nvmed_handle_get_prp(NVMED_HANDLE* nvmed_handle, u64* pa) {
 			ret_addr = nvmed_handle->prpBuf[head];
 			*pa = nvmed_handle->pa_prpBuf[head];
 			if(++head == nvmed_handle->prpBuf_size) head = 0;
+			nvmed_handle->prpBuf_head = head;
 			nvmed_handle->prpBuf_curr--;
 			pthread_spin_unlock(&nvmed_handle->prpBuf_lock);
 			break;
@@ -156,6 +157,7 @@ int nvmed_handle_put_prp(NVMED_HANDLE* nvmed_handle, void* buf, u64 pa) {
 	nvmed_handle->prpBuf[tail] = buf;
 	nvmed_handle->pa_prpBuf[tail] = pa;
 	if(++tail == nvmed_handle->prpBuf_size) tail = 0;
+	nvmed_handle->prpBuf_tail = tail;
 	nvmed_handle->prpBuf_curr++;
 	pthread_spin_unlock(&nvmed_handle->prpBuf_lock);
 
