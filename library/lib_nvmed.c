@@ -660,14 +660,8 @@ NVMED* nvmed_open(char* path, int flags) {
 	NVMED_DEVICE_INFO *dev_info;
 	NVMED* nvmed;
 	int fd;
-	int devfd;
 	int ret;
 	unsigned int num_cache;
-
-	if((devfd = open(path, O_RDWR)) < 0) {
-		nvmed_err("%s: fail to open device file\n", path);
-		return NULL;
-	}
 
 	result = get_path_from_blkdev(path, &admin_path);
 	if(result < 0) {

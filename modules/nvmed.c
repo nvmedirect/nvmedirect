@@ -581,7 +581,7 @@ static int nvmed_queue_delete(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 
 	dev_entry = queue->ns_entry->dev_entry;
 	//Permission Check
-	if(queue->owner.val != get_current_user()->uid.val) {
+	if(current_uid().val != 0 && queue->owner.val != get_current_user()->uid.val) {
 		return -NVMED_NOPERM;
 	}
 
@@ -664,7 +664,7 @@ static int nvmed_set_user(NVMED_NS_ENTRY *ns_entry, NVMED_USER_QUOTA __user *__q
 }
 
 /*
- * IOCTL FUNCTION of /proc/NVMeDirect/nvneXnY/admin
+ * IOCTL FUNCTION of /proc/NVMeDirect/nvmeXnY/admin
  */
 static long nvmed_admin_ioctl(struct file *file, unsigned int cmd, unsigned long arg) {
 	NVMED_NS_ENTRY *ns_entry = PDE_DATA(file->f_inode);

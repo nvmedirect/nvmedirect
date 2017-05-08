@@ -21,11 +21,15 @@
 #include <pwd.h>
 #include <errno.h>
 
+#include <sys/ioctl.h>
+#include "../include/nvmed.h"
 #include "../include/lib_nvmed.h"
 
 void usage(char* prog_name) {
-	printf("usage : %s [dev_path] [get|set] [user] (number of queue)\n", 
-			prog_name);
+	printf("usage : %s [dev_path] [get|set] [user] (number of queue)\n"
+			      "%*s [dev_path] [del] [QID]\n",
+			prog_name,
+			(int)(8 + strlen(prog_name)), "");
 }
 
 int main(int argc, char** argv) {
@@ -38,6 +42,7 @@ int main(int argc, char** argv) {
 	char* username;
 	int num_queue;
 	unsigned int max_queue, current_queue;
+	int ret;
 
 	prog_name = argv[0];
 	if(argc < 4) {
@@ -82,6 +87,15 @@ int main(int argc, char** argv) {
 			else
 				printf("Error on set user quota\n");
 		}
+	}
+	else if(!strcmp(command, "del") && argc == 4) {
+		num_queue = atoi(argv[3]);
+		ret = ioctl(nvmed->ns_fd, NVMED_IOCTL_QUEUE_DELETE, &num_queue);
+
+		if(ret == 0)
+			printf("QID %d is destroyed\n", num_queue);
+		else
+			printf("Can't destroy QID %d\n", num_queue);
 	}
 	else {
 		usage(prog_name);
