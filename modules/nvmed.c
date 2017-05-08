@@ -606,6 +606,9 @@ static int nvmed_queue_delete(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 	//user quota
 	nvmed_set_user_used_quota(queue->ns_entry, current_uid(), FALSE);
 	dev_entry->num_user_queue--;
+	
+	//delete from list
+	list_del(&queue->list);
 
 	//delete queue_entry
 	kfree(queue);
