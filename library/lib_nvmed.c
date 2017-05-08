@@ -557,7 +557,8 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 	pthread_spin_lock(&nvmed->mngt_lock);
 	
 	if(nvmed->process_cq_status != TD_STATUS_STOP) {
-		while(nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND);
+		while(nvmed->process_cq_status == TD_STATUS_SUSPEND ||
+				nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND);
 	
 		if(nvmed->process_cq_status == TD_STATUS_RUNNING) {
 			nvmed->process_cq_status = TD_STATUS_REQ_SUSPEND;
@@ -608,7 +609,6 @@ void* nvmed_process_cq(void *data) {
 			pthread_cond_wait(&nvmed->process_cq_cond, &nvmed->process_cq_mutex);
 			pthread_mutex_unlock(&nvmed->process_cq_mutex);
 			nvmed->process_cq_status = TD_STATUS_RUNNING;
-
 		}
 
 		if(nvmed->process_cq_status == TD_STATUS_REQ_STOP) {
