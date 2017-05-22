@@ -1485,7 +1485,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	unsigned long	io_start, io_nums = 0;
 	int i = 0, block_idx;
 	int cache_idx = 0;
-	unsigned int buf_offs, buf_copy_size, cache_offs;
+	unsigned int buf_offs = 0, buf_copy_size = 0, cache_offs = 0;
 	TAILQ_HEAD(cache_list, nvmed_cache) temp_head;
 
 	if(!nvmed_rw_verify_area(nvmed_handle, start_lba, len))
@@ -1546,7 +1546,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 					buf_copy_size = PAGE_SIZE - cache_offs;
 				}
 				memcpy(buf, cache->ptr + cache_offs, buf_copy_size);
-				buf_offs = buf_copy_size;
+				buf_offs+= buf_copy_size;
 			}
 			else if(cache_idx == io_blocks -1) {
 				buf_copy_size = len - buf_offs;
@@ -1668,7 +1668,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 				else {
 					buf_copy_size = PAGE_SIZE - cache_offs;
 				}
-				memcpy(buf, cache->ptr + cache_offs, buf_copy_size);
+				memcpy(buf + buf_offs, cache->ptr + cache_offs, buf_copy_size);
 				buf_offs = buf_copy_size;
 			}
 			else if(cache_idx == io_blocks -1) {
@@ -1699,7 +1699,7 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	NVMED_CACHE **cacheP, *cache;
 	ssize_t total_write = 0;
 	unsigned long start_block, end_block, io_blocks;
-	unsigned int buf_offs, buf_copy_size, cache_offs;
+	unsigned int buf_offs = 0, buf_copy_size = 0, cache_offs = 0;
 	unsigned int  find_blocks;
 	int block_idx=0, cache_idx=0;
 	NVMED_BOOL found_from_cache;
@@ -1720,7 +1720,6 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	pthread_rwlock_unlock(&nvmed->cache_radix_lock);
 	
 	TAILQ_INIT(&temp_head);
-
 	//find all in cache?
 	if(find_blocks == io_blocks) {
 		for(cache_idx=0; cache_idx<find_blocks; cache_idx++) {
@@ -1741,11 +1740,11 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 			}
 			else if(cache_idx == io_blocks -1) {
 				buf_copy_size = len - buf_offs;
-				memcpy(cache->ptr, buf, buf_copy_size);
+				memcpy(cache->ptr, buf + buf_offs, buf_copy_size);
 			}
 			else {
 				buf_copy_size = PAGE_SIZE;
-				memcpy(cache->ptr, buf, buf_copy_size);
+				memcpy(cache->ptr, buf + buf_offs, buf_copy_size);
 				buf_offs+= PAGE_SIZE;
 			}
 
@@ -1791,8 +1790,8 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 					nvmed_cache_io_rw(nvmed_handle, nvme_cmd_read, cache, \
 						cache->lpaddr * PAGE_SIZE, PAGE_SIZE, HANDLE_SYNC_IO);
 				}
-				memcpy(cache->ptr + cache_offs, buf, buf_copy_size);
-				buf_offs = buf_copy_size;
+				memcpy(cache->ptr + cache_offs, buf + buf_offs, buf_copy_size);
+				buf_offs+= buf_copy_size;
 			}
 			else if(cache_idx == io_blocks -1) {
 				buf_copy_size = len - buf_offs;
@@ -1802,11 +1801,11 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 						cache->lpaddr * PAGE_SIZE, PAGE_SIZE, HANDLE_SYNC_IO);
 				}
 
-				memcpy(cache->ptr, buf, buf_copy_size);
+				memcpy(cache->ptr, buf + buf_offs, buf_copy_size);
 			}
 			else {
 				buf_copy_size = PAGE_SIZE;
-				memcpy(cache->ptr, buf, buf_copy_size);
+				memcpy(cache->ptr, buf + buf_offs, buf_copy_size);
 				buf_offs+= PAGE_SIZE;
 			}
 			
