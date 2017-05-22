@@ -24,6 +24,7 @@
 #include <linux/proc_fs.h>
 #include <linux/genhd.h>
 #include <linux/kallsyms.h>
+#include <linux/cred.h>
 #include "./nvmed.h"
 
 int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd, 
