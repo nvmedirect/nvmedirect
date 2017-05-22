@@ -1249,6 +1249,12 @@ ssize_t nvmed_cache_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, NVMED_CACHE *__
 	if(nvmed->process_cq_status == TD_STATUS_STOP) {
 		nvmed->process_cq_status = TD_STATUS_REQ_SUSPEND;
 		pthread_create(&nvmed->process_cq_td, NULL, &nvmed_process_cq, (void*)nvmed);
+
+		while(nvmed->process_cq_status != TD_STATUS_SUSPEND);
+
+		pthread_mutex_lock(&nvmed->process_cq_mutex);
+		pthread_cond_signal(&nvmed->process_cq_cond);
+		pthread_mutex_unlock(&nvmed->process_cq_mutex);
 	}
 
 	remain = len;
@@ -1354,6 +1360,12 @@ ssize_t nvmed_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 			nvmed->process_cq_status == TD_STATUS_STOP) {
 		nvmed->process_cq_status = TD_STATUS_REQ_SUSPEND;
 		pthread_create(&nvmed->process_cq_td, NULL, &nvmed_process_cq, (void*)nvmed);
+		
+		while(nvmed->process_cq_status != TD_STATUS_SUSPEND);
+
+		pthread_mutex_lock(&nvmed->process_cq_mutex);
+		pthread_cond_signal(&nvmed->process_cq_cond);
+		pthread_mutex_unlock(&nvmed->process_cq_mutex);
 	}
 
 	remain = len;
@@ -1813,11 +1825,6 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 		}
 	}
 
-	if(nvmed->process_cq_status == TD_STATUS_SUSPEND) {
-		pthread_mutex_lock(&nvmed->process_cq_mutex);
-		pthread_cond_signal(&nvmed->process_cq_cond);
-		pthread_mutex_unlock(&nvmed->process_cq_mutex);
-	}
 
 	nvmed_cache_io_rw(nvmed_handle, nvme_cmd_write, temp_head.tqh_first, \
 			start_block * PAGE_SIZE, io_blocks * PAGE_SIZE, nvmed_handle->flags);
