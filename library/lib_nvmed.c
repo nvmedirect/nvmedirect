@@ -683,8 +683,6 @@ NVMED* nvmed_open(char* path, int flags) {
 		
 		return NULL;
 	}
-	dev_info->max_hw_sectors = 2097152;
-	//nvmed = malloc(sizeof(NVMED));
 	nvmed = malloc(sizeof(*nvmed));
 	if(nvmed==NULL) {
 		free(admin_path);
