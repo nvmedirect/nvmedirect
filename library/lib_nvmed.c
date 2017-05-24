@@ -683,6 +683,9 @@ NVMED* nvmed_open(char* path, int flags) {
 		
 		return NULL;
 	}
+
+	if(dev_info->max_hw_sectors > 4096) dev_info->max_hw_sectors = 4096;
+
 	nvmed = malloc(sizeof(*nvmed));
 	if(nvmed==NULL) {
 		free(admin_path);
@@ -1127,12 +1130,14 @@ int make_prp_list(NVMED_HANDLE* nvmed_handle, void* buf,
 	u64 *paBase = __paBase;
 	u64 __prp1, __prp2;
 
-	u64 paList[64];
+	u64* paList;
 	unsigned int bufOffs;
 
 	*prp2_addr = NULL;
 
 	if(io_size % PAGE_SIZE > 0) numBuf ++;
+
+	paList = malloc(sizeof(u64) * numBuf);
 
 	if(paBase == NULL) {
 		numBuf = virt_to_phys(HtoD(nvmed_handle), buf, paList, numBuf * PAGE_SIZE);
@@ -1171,6 +1176,9 @@ int make_prp_list(NVMED_HANDLE* nvmed_handle, void* buf,
 		}
 
 	}
+
+	free(paList);
+
 	*prp1 = __prp1;
 	*prp2 = __prp2;
 
