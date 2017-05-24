@@ -45,8 +45,7 @@ Finally, link your program with the NVMeDirect library and run!
 
 ## How to use NVMeDirect APIs
 
-Please refer to the NVMeDirect-APIs.txt file and examples in the
-exmaple/nvmed_example directory.
+Please refer to the [NVMeDirect-APIs.md](https://github.com/nvmedirect/nvmedirect/blob/master/NVMeDirect-APIs.md) file.
 
 
 ## Contacts
