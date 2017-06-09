@@ -74,6 +74,15 @@ enum {
 	NVMED_NUM_FLAGS			= 3,
 };
 
+//FLAGS for NVMED_QUEUE
+enum {
+	QUEUE_MANUAL_COMPLETION	= 1 << 0,
+	QUEUE_INTERRUPT			= 1 << 1,
+
+	QUEUE_NUM_FLAGS			= 2
+};
+#define QUEUE_MANUAL_CQ (QUEUE_MANUAL_COMPLETION | QUEUE_INTERRUPT)
+
 //FLAGS For NVMED_HANDLE
 enum {
 	HANDLE_DIRECT_IO		= 1 << 0,
@@ -83,7 +92,9 @@ enum {
 	
 	HANDLE_MQ				= 1 << 3,
 
-	HANDLE_NUM_FLAGS		= 4,
+	HANDLE_INTERRUPT		= 1 << 4,
+
+	HANDLE_NUM_FLAGS		= 5,
 };
 
 //STATUS for Process CQ, IOSCHED thread
@@ -117,6 +128,16 @@ enum {
 	IO_ERROR				= 1 << 2,
 
 	IO_NUM_FLAGS			= 3,
+};
+
+//STATUS FOR IOD INTERRUPT
+enum {
+	IOD_INTR_INACTIVE		= 0,
+	IOD_INTR_INIT			= 1 << 0,
+	IOD_INTR_WAITING		= 1 << 1,
+	IOD_INTR_COMPLETE		= 1 << 2,
+
+	IOD_INTR_NUM_FLAGS		= 3,
 };
 
 //FLAGS FOR AIO
@@ -200,6 +221,7 @@ typedef struct nvmed_queue {
 
 	unsigned int aio_q_head;
 
+	pthread_t process_cq_intr;
 
 	LIST_ENTRY(nvmed_queue) queue_list;
 } NVMED_QUEUE;
@@ -281,6 +303,12 @@ typedef struct nvmed_iod {
 	unsigned int num_cache;
 	struct nvmed_cache** cache;
 
+	/* For Intrrupt completion */
+	u32 intr_status;
+	pthread_mutex_t intr_cq_mutex;	
+	pthread_cond_t  intr_cq_cond;
+
+	/* For AIO */
 	NVMED_AIO_CTX* context;
 } NVMED_IOD;
 

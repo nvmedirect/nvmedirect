@@ -24,9 +24,10 @@
 #endif
 
 #define NVMED_IOCTL_NVMED_INFO		_IOW('N', 0x50, struct nvmed_device_info)
-#define NVMED_IOCTL_QUEUE_CREATE	_IOR('N', 0x51, unsigned int)
+#define NVMED_IOCTL_QUEUE_CREATE	_IOWR('N', 0x51, unsigned int)
 #define NVMED_IOCTL_QUEUE_DELETE	_IOW('N', 0x52, unsigned int)
 #define NVMED_IOCTL_GET_BUFFER_ADDR	_IOWR('N', 0x60, struct nvmed_buf)
+#define NVMED_IOCTL_INTERRUPT_COMM	_IOWR('N', 0x61, unsigned long)
 #define NVMED_IOCTL_GET_USER		_IOWR('N', 0x70, struct nvmed_user_quota)
 #define NVMED_IOCTL_SET_USER		_IOWR('N', 0x71, struct nvmed_user_quota)
 
@@ -71,6 +72,11 @@ typedef struct nvmed_device_info {
 	int part_no;
 
 } NVMED_DEVICE_INFO;
+
+typedef struct nvmed_create_queue_args {
+	u32 qid;
+	int reqInterrupt;
+} NVMED_CREATE_QUEUE_ARGS;
 
 typedef struct nvmed_user_quota {
 	uid_t uid;

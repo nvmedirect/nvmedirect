@@ -25,7 +25,11 @@
 #include <linux/genhd.h>
 #include <linux/kallsyms.h>
 #include <linux/cred.h>
+
+#define NVMED_CORE_HEADERS
+
 #include "./nvmed.h"
+
 
 int nvmed_submit_sync_cmd(struct nvme_dev *dev, struct nvme_command* cmd, 
 		void* buffer, unsigned bufflen, u32 *result) {
@@ -120,11 +124,14 @@ free_nvmeq:
 }
 
 static int adapter_alloc_cq(NVMED_DEV_ENTRY *dev_entry, u16 qid,
-						struct nvme_queue *nvmeq)
+						struct nvme_queue *nvmeq, int irq_vector)
 {
 	struct nvme_dev *dev = dev_entry->dev;
 	struct nvme_command c;
 	int flags = NVME_QUEUE_PHYS_CONTIG;
+
+	if(irq_vector > 0)
+		flags |= NVME_CQ_IRQ_ENABLED;
 
 	/*
 	 * Note: we (ab)use the fact the the prp fields survive if no data
@@ -136,7 +143,7 @@ static int adapter_alloc_cq(NVMED_DEV_ENTRY *dev_entry, u16 qid,
 	c.create_cq.cqid = cpu_to_le16(qid);
 	c.create_cq.qsize = cpu_to_le16(nvmeq->q_depth - 1);
 	c.create_cq.cq_flags = cpu_to_le16(flags);
-	c.create_cq.irq_vector = 0;
+	c.create_cq.irq_vector = irq_vector;
 
 	return nvmed_submit_sync_cmd(dev, &c, NULL, 0, NULL);
 }
@@ -163,13 +170,13 @@ static int adapter_alloc_sq(NVMED_DEV_ENTRY *dev_entry, u16 qid,
 	return nvmed_submit_sync_cmd(dev, &c, NULL, 0, NULL);
 }
 
-static int nvmed_create_queue(NVMED_QUEUE_ENTRY *queue_entry, int qid) {
+static int nvmed_create_queue(NVMED_QUEUE_ENTRY *queue_entry, int qid, int irq_vector) {
 	NVMED_DEV_ENTRY *dev_entry = queue_entry->ns_entry->dev_entry;
 	struct nvme_dev *dev = queue_entry->nvmeq->dev;
 	struct nvme_queue *nvmeq = queue_entry->nvmeq;
 	int result;
 
-	result = adapter_alloc_cq(dev_entry, qid, nvmeq);
+	result = adapter_alloc_cq(dev_entry, qid, nvmeq, irq_vector);
 	if(result < 0)
 		return result;
 
@@ -456,18 +463,27 @@ static const struct file_operations nvme_queue_cq_fops = {
 	.mmap	= nvmed_queue_cq_proc_mmap,
 };
 
-static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__qid) {
+static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry,
+		NVMED_CREATE_QUEUE_ARGS __user *__args) {
 	NVMED_DEV_ENTRY *dev_entry = ns_entry->dev_entry;
 	struct nvme_dev *dev = NS_ENTRY_TO_DEV(ns_entry);
 	unsigned int queue_count;
 	NVMED_QUEUE_ENTRY *queue;
+	NVMED_CREATE_QUEUE_ARGS args;
 	size_t size;
 	char dentry_buf[4];
 	int qid;
 	int err;
 	int result;
+	bool reqInterrupt = FALSE;
+	unsigned int irq_vector = 0;
 
 	spin_lock(&dev_entry->ctrl_lock);
+
+	copy_from_user(&args, __args, sizeof(NVMED_CREATE_QUEUE_ARGS));
+	if(args.reqInterrupt) {
+		reqInterrupt = TRUE;
+	}
 
 	//check quota
 	if(!nvmed_get_remain_user_quota(ns_entry, current_uid())) {
@@ -511,9 +527,26 @@ static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 		result = -NVMED_FAULT;
 		goto result_error_bmap_clear;
 	}
-	result = nvmed_create_queue(queue, qid);
+
+	//get Vector Nr
+	if(reqInterrupt) {
+		irq_vector = find_first_zero_bit(dev_entry->vec_bmap, 
+				dev_entry->vec_bmap_max);
+		set_bit(irq_vector, dev_entry->vec_bmap);
+	}
+
+	result = nvmed_create_queue(queue, qid, irq_vector);
 	if(result) {
-		goto result_error;
+		goto result_error_create_queue;
+	}
+
+	//If reqInterrupt && irq_vector?
+	if(reqInterrupt && irq_vector) {
+		result = nvmed_register_intr_handler(dev_entry, queue, irq_vector);
+		if(result)
+			goto result_error_set_intr;
+		queue->irq_vector = irq_vector;
+		atomic_set(&queue->nr_intr, 0);
 	}
 
 	//create proc entry
@@ -536,11 +569,16 @@ static int nvmed_queue_create(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 
 	spin_unlock(&dev_entry->ctrl_lock);
 
-	copy_to_user(__qid, &qid, sizeof(qid));
+	args.qid = qid;
+	copy_to_user(__args, &args, sizeof(NVMED_CREATE_QUEUE_ARGS));
 
 	return NVMED_SUCCESS;
 
-result_error:
+result_error_set_intr:
+	clear_bit(irq_vector, dev_entry->vec_bmap);
+	nvmed_disable_queue(dev_entry, queue);
+
+result_error_create_queue:
 	dma_free_coherent(queue->nvmeq->q_dmadev, CQ_SIZE(queue->nvmeq->q_depth),
 			(void *)queue->nvmeq->cqes, queue->nvmeq->cq_dma_addr);
 	dma_free_coherent(queue->nvmeq->q_dmadev, SQ_SIZE(queue->nvmeq->q_depth),
@@ -549,11 +587,12 @@ result_error:
 
 result_error_bmap_clear:
 	clear_bit(qid, dev_entry->queue_bmap);
+	kfree(queue);
 
 	return result;
 }
 
-static NVMED_QUEUE_ENTRY* nvmed_get_queue_from_qid(NVMED_NS_ENTRY *ns_entry, 
+NVMED_QUEUE_ENTRY* nvmed_get_queue_from_qid(NVMED_NS_ENTRY *ns_entry, 
 		unsigned int qid) {
 	NVMED_QUEUE_ENTRY *queue, *ret = NULL;
 
@@ -567,12 +606,9 @@ static NVMED_QUEUE_ENTRY* nvmed_get_queue_from_qid(NVMED_NS_ENTRY *ns_entry,
 	return ret;
 }
 
-static int nvmed_queue_delete(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__qid) {
+static int nvmed_queue_delete_kern(NVMED_NS_ENTRY *ns_entry, unsigned int qid) {
 	NVMED_QUEUE_ENTRY *queue;
 	NVMED_DEV_ENTRY *dev_entry; 	
-	unsigned int qid;
-
-	copy_from_user(&qid, __qid, sizeof(unsigned int));
 
 	//get Queue
 	queue = nvmed_get_queue_from_qid(ns_entry, qid);
@@ -598,6 +634,14 @@ static int nvmed_queue_delete(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 	//clear bitmap
 	clear_bit(qid, dev_entry->queue_bmap);
 
+	//interrupt enabled?
+	if(queue->irq_vector) {
+		free_irq(dev_entry->msix_entry[queue->irq_vector].vector, queue);
+		clear_bit(queue->irq_vector, dev_entry->vec_bmap);
+
+		kfree(queue->irq_name);
+	}
+
 	//proc remove
 	proc_remove(queue->proc_sq);
 	proc_remove(queue->proc_cq);
@@ -615,6 +659,14 @@ static int nvmed_queue_delete(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__q
 	kfree(queue);
 
 	return NVMED_SUCCESS;
+}
+
+static int nvmed_queue_delete(NVMED_NS_ENTRY *ns_entry, unsigned int __user *__qid) {
+	unsigned int qid;
+	
+	copy_from_user(&qid, __qid, sizeof(unsigned int));
+
+	return nvmed_queue_delete_kern(ns_entry, qid);
 }
 
 static int nvmed_get_user(NVMED_NS_ENTRY *ns_entry, NVMED_USER_QUOTA __user *__quota) {
@@ -678,13 +730,16 @@ static long nvmed_admin_ioctl(struct file *file, unsigned int cmd, unsigned long
 			return nvmed_get_device_info(ns_entry, (void __user *)arg);
 
 		case NVMED_IOCTL_QUEUE_CREATE:
-			return nvmed_queue_create(ns_entry, (void __user*)arg);
+			return nvmed_queue_create(ns_entry, (void __user *)arg);
 
 		case NVMED_IOCTL_QUEUE_DELETE:
 			return nvmed_queue_delete(ns_entry, (void __user *)arg);
 
 		case NVMED_IOCTL_GET_BUFFER_ADDR:
 			return nvmed_get_buffer_addr(ns_entry, (void __user *)arg);
+
+		case NVMED_IOCTL_INTERRUPT_COMM:
+			return nvmed_irq_comm(ns_entry, (void __user *)arg);
 
 		case NVMED_IOCTL_GET_USER:
 			return nvmed_get_user(ns_entry, (void __user *)arg);
@@ -800,6 +855,20 @@ static NVMED_RESULT nvmed_scan_device(void) {
 			set_bit(i, dev_entry->queue_bmap);
 		}
 
+		// Intr Supports
+		if(check_msix(dev_entry)) {
+			dev_entry->msix_entry = NULL;
+			dev_entry->vec_max = dev->max_qid - 1;
+			dev_entry->vec_kernel = dev->max_qid;
+			dev_entry->vec_bmap_max = pci_msix_vec_count(pdev);
+			dev_entry->vec_bmap = kzalloc(sizeof(unsigned long) * \
+					BITS_TO_LONGS(dev_entry->vec_bmap_max), GFP_KERNEL);
+			for(i=0; i<dev->max_qid; i++) {
+				set_bit(i, dev_entry->vec_bmap);
+			}
+		}
+		// End - Intr Supports
+
 		INIT_LIST_HEAD(&dev_entry->ns_list);
 
 		list_add(&dev_entry->list, &nvmed_dev_list);
@@ -853,7 +922,6 @@ static NVMED_RESULT nvmed_scan_device(void) {
 			}
 			disk_part_iter_exit(&piter);
 		}
-		
 	}
 	kfree(tempPath);
 	kfree(sysfsPath);
@@ -874,6 +942,14 @@ static int __init nvmed_init(void)
 	return 0;
 }
 
+void nvmed_cleanup_queues(NVMED_NS_ENTRY *ns_entry) {
+	NVMED_QUEUE_ENTRY *queue, *queue_next;
+
+	list_for_each_entry_safe(queue, queue_next, &ns_entry->queue_list, list) {
+		nvmed_queue_delete_kern(ns_entry, queue->nvmeq->qid);
+	}
+}
+
 static void __exit nvmed_cleanup(void)
 {
 	NVMED_DEV_ENTRY *dev_entry, *dev_next;
@@ -881,11 +957,17 @@ static void __exit nvmed_cleanup(void)
 	/* Cleanup procfs object */
 	list_for_each_entry_safe(dev_entry, dev_next, &nvmed_dev_list, list) {
 		list_for_each_entry_safe(ns_entry, ns_next, &dev_entry->ns_list, list) {
+
+			nvmed_cleanup_queues(ns_entry);
+
 			proc_remove(ns_entry->proc_admin);
 			proc_remove(ns_entry->proc_sysfs_link);
 			proc_remove(ns_entry->ns_proc_root);
 			list_del(&ns_entry->list);
 			kfree(ns_entry);
+		}
+		if(check_msix(dev_entry)) {
+			kfree(dev_entry->vec_bmap);
 		}
 		kfree(dev_entry);
 	}

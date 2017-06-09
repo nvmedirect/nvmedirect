@@ -188,6 +188,14 @@ void nvmed_complete_iod(NVMED_IOD* iod) {
 		}
 	}
 
+	if(iod->intr_status) {
+		while(iod->intr_status != IOD_INTR_WAITING);
+
+		pthread_mutex_lock(&iod->intr_cq_mutex);
+		pthread_cond_signal(&iod->intr_cq_cond);
+		pthread_mutex_unlock(&iod->intr_cq_mutex);
+	}
+
 	if(iod->num_cache != 0) {
 		for(i=0; i<iod->num_cache; i++) {
 			cache = iod->cache[i];
@@ -466,6 +474,27 @@ int nvmed_handle_feature_set(NVMED_HANDLE* nvmed_handle, int feature, int value)
 }
 
 /*
+ * Process CQ Interrupt Handling
+ */
+void* nvmed_process_cq_intr(void *data) {
+	NVMED_QUEUE* nvmed_queue = data;
+	NVMED* nvmed = QtoD(nvmed_queue);
+	unsigned long qid = nvmed_queue->qid;
+	int ret;
+
+	while(1) {
+		ret = ioctl(nvmed->ns_fd, NVMED_IOCTL_INTERRUPT_COMM, &qid);
+		if(ret < 0) break;
+
+		if(qid != 0) {
+			nvmed_queue_complete(nvmed_queue);
+		}
+	}
+	
+	pthread_exit((void *)NULL);
+};
+
+/*
  * Create User-space I/O queue and map to User virtual address
  */
 NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
@@ -474,12 +503,17 @@ NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
 	char pathBase[1024];
 	char pathBuf[1024];
 	u32 *q_dbs;
-	u32	qid;
+	NVMED_CREATE_QUEUE_ARGS create_args;
 
 	pthread_spin_lock(&nvmed->mngt_lock);
 	
+	memset(&create_args, 0x0, sizeof(create_args));
+
+	if(__FLAG_ISSET(flags, QUEUE_INTERRUPT))
+		create_args.reqInterrupt = NVMED_TRUE;
+
 	/* Request Create I/O Queues */
-	ret = ioctl(nvmed->ns_fd, NVMED_IOCTL_QUEUE_CREATE, &qid);
+	ret = ioctl(nvmed->ns_fd, NVMED_IOCTL_QUEUE_CREATE, &create_args);
 	if(ret < 0) {
 		nvmed_printf("%s: fail to create I/O queue\n", nvmed->ns_path);
 
@@ -489,7 +523,7 @@ NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
 	nvmed_queue = malloc(sizeof(NVMED_QUEUE));
 	nvmed_queue->nvmed = nvmed;
 	nvmed_queue->flags = flags;
-	nvmed_queue->qid = qid;
+	nvmed_queue->qid = create_args.qid;
 	
 	if(nvmed->dev_info->part_no != 0) {
 		sprintf(pathBase, "/proc/nvmed/nvme%dn%dp%d/%d",
@@ -536,6 +570,10 @@ NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
 	nvmed->numQueue++;
 
 	nvmed_queue->numHandle = 0;
+	
+	if(__FLAG_ISSET(flags, QUEUE_INTERRUPT)) {
+		pthread_create(&nvmed_queue->process_cq_intr, NULL, &nvmed_process_cq_intr, (void*)nvmed_queue);
+	}
 
 	pthread_spin_unlock(&nvmed->mngt_lock);
 
@@ -547,6 +585,7 @@ NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
  */
 int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 	NVMED* nvmed;
+	void *status;
 	int ret;
 	
 	if(nvmed_queue == NULL) return -NVMED_NOENTRY;
@@ -588,6 +627,7 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 		
 		nvmed->numQueue--;
 	}
+	pthread_join(nvmed_queue->process_cq_intr, (void **)&status);
 	free(nvmed_queue);
 
 	pthread_spin_unlock(&nvmed->mngt_lock);
@@ -617,6 +657,9 @@ void* nvmed_process_cq(void *data) {
 		
 		for (nvmed_queue = nvmed->queue_head.lh_first; 
 				nvmed_queue != NULL; nvmed_queue = nvmed_queue->queue_list.le_next) {
+			if(FLAG_ISSET(nvmed_queue, QUEUE_MANUAL_CQ))
+				continue;
+
 			nvmed_queue_complete(nvmed_queue);
 		}
 	};
@@ -782,6 +825,10 @@ int nvmed_close(NVMED* nvmed) {
 		LIST_REMOVE(slot, slot_list);
 	}
 
+	pthread_rwlock_destroy(&nvmed->cache_radix_lock);
+	pthread_spin_destroy(&nvmed->cache_list_lock);
+	pthread_mutex_destroy(&nvmed->process_cq_mutex);
+	pthread_cond_destroy(&nvmed->process_cq_cond);
 	pthread_spin_destroy(&nvmed->mngt_lock);
 
 	free(nvmed);
@@ -840,8 +887,7 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	pthread_spin_lock(&nvmed_queue->sq_lock);
 
 	while(1) {
-		target_id = nvmed_queue->iod_pos++;
-		iod = nvmed_queue->iod_arr + target_id;
+		target_id = nvmed_queue->iod_pos++; iod = nvmed_queue->iod_arr + target_id;
 		if(nvmed_queue->iod_pos == nvmed->dev_info->q_depth)
 			nvmed_queue->iod_pos = 0;
 		if(iod->status != IO_INIT)
@@ -859,6 +905,14 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	if(iod->context!=NULL) {
 		iod->context->num_init_io++;
 		iod->context->status = AIO_PROCESS;
+	}
+
+	if(FLAG_ISSET(nvmed_handle, HANDLE_INTERRUPT)) {
+		iod->intr_status = IOD_INTR_INIT;
+		pthread_mutex_init(&iod->intr_cq_mutex, NULL);
+	}
+	else {
+		iod->intr_status = IOD_INTR_INACTIVE;
 	}
 
 	if(__cache != NULL) {
@@ -922,7 +976,18 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	
 	/* If Sync I/O => Polling */
 	if(__FLAG_ISSET(flags, HANDLE_SYNC_IO)) {
-		nvmed_io_polling(nvmed_handle, target_id);
+		if(iod->intr_status == IOD_INTR_INACTIVE) {
+			nvmed_io_polling(nvmed_handle, target_id);
+		}
+		else {
+			pthread_mutex_lock(&iod->intr_cq_mutex);
+			iod->intr_status = IOD_INTR_WAITING;
+			pthread_cond_wait(&iod->intr_cq_cond, &iod->intr_cq_mutex);
+			pthread_mutex_unlock(&iod->intr_cq_mutex);
+
+			pthread_mutex_destroy(&iod->intr_cq_mutex);
+			pthread_cond_destroy(&iod->intr_cq_cond);
+		}
 	}
 
 	return len;
@@ -1853,7 +1918,6 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	return total_write;
 }
 
-
 //offset, length -> should be 512B Aligned
 ssize_t nvmed_read(NVMED_HANDLE* nvmed_handle, void* buf, size_t count) {
 	ssize_t ret;
@@ -1948,4 +2012,3 @@ int nvmed_get_user_quota(NVMED* nvmed, uid_t uid,
 
 	return NVMED_SUCCESS;
 }
-

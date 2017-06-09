@@ -6,6 +6,7 @@ KERNEL_VERSION_MINOR = $(shell $(MAKE) -C $(KERNELDIR) -s kernelversion | cut -f
 KERNEL_VERSION_PATCH = $(shell $(MAKE) -C $(KERNELDIR) -s kernelversion | cut -f3 -d.)
 
 obj-m   := nvmed.o
+nvmed-objs := nvmed-core.o nvmed-intr.o
 
 default:
 		$(MAKE) -C $(KERNELDIR) EXTRA_CFLAGS="-DKERNEL_VERSION_MAJOR=$(KERNEL_VERSION_MAJOR) -DKERNEL_VERSION_MINOR=$(KERNEL_VERSION_MINOR) -DKERNEL_VERSION_PATCH=$(KERNEL_VERSION_PATCH)" SUBDIRS=$(PWD) modules

@@ -21,6 +21,8 @@
 #include <linux/kthread.h>
 #include <linux/version.h>
 #include <linux/blkdev.h>
+#include <linux/interrupt.h>
+#include <linux/msi.h>
 
 #include "../include/nvmed.h"
 
@@ -104,6 +106,11 @@
 	#include <linux/nvme.h>
 #endif
 
+#define TRUE	1
+#define FALSE	0
+
+#ifdef NVMED_CORE_HEADERS
+
 //NVME_SET_FEATURES
 #if KERNEL_VERSION_CODE < KERNEL_VERSION(4,5,0)
 	#define NVMED_SET_FEATURES(dev_entry, fid, dword11, dma_addr, result) \
@@ -146,15 +153,14 @@
 int (*nvmed_submit_cmd)(struct nvme_dev *, struct nvme_command *, 
 		u32 *result) = NULL;
 
-#define TRUE	1
-#define FALSE	0
-
 unsigned char admin_timeout = 60;
 #define ADMIN_TIMEOUT		(admin_timeout * HZ)
 
 struct proc_dir_entry *NVMED_PROC_ROOT;
 
 static LIST_HEAD(nvmed_dev_list);
+
+#endif //NVMED_CORE_HEADERS
 
 struct async_cmd_info {
 	struct kthread_work work;
@@ -192,6 +198,15 @@ typedef struct nvmed_user_quota_entry {
 	struct list_head list;
 } NVMED_USER_QUOTA_ENTRY;
 
+struct nvme_irq_desc {
+	int cq_vector;
+	irq_handler_t handler;
+	irq_handler_t thread_fn;
+	const struct cpumask *affinity_hint;
+	const char *irqName;
+	void *queue;
+};
+
 typedef struct nvmed_dev_entry {
 	struct nvme_dev *dev;
 	struct pci_dev *pdev;
@@ -199,10 +214,18 @@ typedef struct nvmed_dev_entry {
 	spinlock_t ctrl_lock;
 
 	unsigned int num_user_queue;
-	DECLARE_BITMAP(queue_bmap, 256);
+	DECLARE_BITMAP(queue_bmap, 65536);
 
 	struct list_head list;
 	struct list_head ns_list;
+	
+	// Intr Support
+	unsigned int vec_max;  // 0 based
+	unsigned int vec_kernel;
+	unsigned long *vec_bmap;
+	unsigned int vec_bmap_max;
+	struct nvme_irq_desc *desc;
+	struct msix_entry *msix_entry;
 } NVMED_DEV_ENTRY;
 
 typedef struct nvmed_ns_entry {
@@ -238,6 +261,26 @@ typedef struct nvmed_queue_entry {
 	kuid_t owner;
 
 	struct list_head list;
+	
+	// Intr Support
+	unsigned int irq_vector;
+	char* irq_name;
+	atomic_t nr_intr;
 } NVMED_QUEUE_ENTRY;
+
+static inline bool check_msix(NVMED_DEV_ENTRY *dev_entry) {
+	struct pci_dev *pdev = dev_entry->pdev;
+
+	return pdev->msix_enabled;
+}
+
+/* nvmed-core.c */
+NVMED_QUEUE_ENTRY* nvmed_get_queue_from_qid(NVMED_NS_ENTRY *ns_entry, 
+		unsigned int qid);
+
+/* nvmed-intr.c */
+NVMED_RESULT nvmed_register_intr_handler(NVMED_DEV_ENTRY *dev_entry,
+		NVMED_QUEUE_ENTRY *queue, unsigned int irq_vector);
+int nvmed_irq_comm(NVMED_NS_ENTRY *ns_entry, unsigned long __user *__qid);
 
 #endif
