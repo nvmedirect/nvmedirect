@@ -1442,7 +1442,7 @@ ssize_t nvmed_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	}
 	nvmed = nvmed_queue->nvmed;
 
-	if(!FLAG_ISSET(nvmed_handle, HANDLE_SYNC_IO) && 
+	if((!FLAG_ISSET(nvmed_handle, HANDLE_SYNC_IO)) && 
 			private == NULL &&
 			nvmed->process_cq_status == TD_STATUS_STOP) {
 		nvmed->process_cq_status = TD_STATUS_REQ_SUSPEND;
