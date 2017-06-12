@@ -14,6 +14,12 @@
 		list_for_each_entry((desc), dev_to_msi_list((pdev)), list)
 #endif
 
+#ifdef NVMED_MSIX_HANDLER_V1
+	#define vector_to_irq(dev_entry, pdev, irq_vector) dev_entry->msix_entry[irq_vector].vector
+#else
+	#define vector_to_irq(dev_entry, pdev, irq_vector) pci_irq_vector(pdev, irq_vector)
+#endif
+
 #define QUEUE_BMAP_IDX(qid) qid/(sizeof(unsigned long) * 8)
 #define QUEUE_BMAP_OFF(qid) qid%(sizeof(unsigned long) * 8)
 int nvmed_irq_comm(NVMED_NS_ENTRY *ns_entry, unsigned long __user *__qid) {
@@ -96,13 +102,17 @@ static irqreturn_t nvmed_irq_handler(int irq, void *data) {
 
 NVMED_RESULT nvmed_reinitialize_msix(NVMED_DEV_ENTRY *dev_entry, 
 		unsigned long nr_vecs) {
+#ifdef NVMED_MSIX_HANDLER_V1
 	struct nvme_dev *dev = dev_entry->dev;
+#endif
 	struct pci_dev *pdev = dev_entry->pdev;
 	struct msi_desc *msi_desc;
 	struct irq_desc *irq_desc;
 	struct irqaction *action;
 	struct nvme_irq_desc *desc, *desc_arr;
+#ifdef NVMED_MSIX_HANDLER_V1
 	struct msix_entry *entry;
+#endif
 	int irq_idx = 0;
 	int vecs;
 	int dev_id, q_id;
@@ -113,11 +123,14 @@ NVMED_RESULT nvmed_reinitialize_msix(NVMED_DEV_ENTRY *dev_entry,
 	
 	desc_arr = kzalloc(sizeof(struct nvme_irq_desc) * nr_vecs, 
 			GFP_KERNEL);
+#ifdef NVMED_MSIX_HANDLER_V1
 	entry = kzalloc(sizeof(struct msix_entry) * nr_vecs, GFP_KERNEL);
 
 	for(i=0; i<nr_vecs; i++) {
 		entry[i].entry = i;
 	}
+
+#endif
 
 	for_each_msi_entry(msi_desc, &pdev->dev) {
 		irq_desc = irq_to_desc(msi_desc->irq);
@@ -147,33 +160,40 @@ NVMED_RESULT nvmed_reinitialize_msix(NVMED_DEV_ENTRY *dev_entry,
 	
 	pci_disable_msix(pdev);
 
+#ifdef NVMED_MSIX_HANDLER_V1
 	vecs = pci_enable_msix_range(pdev, entry, 1, nr_vecs);
-	if(vecs > 0)
-	for (i=0; i<irq_idx; i++) {
-		desc = &desc_arr[i];
-		ret = request_threaded_irq(entry[desc->cq_vector].vector,
-					desc->handler, desc->thread_fn, IRQF_SHARED,
-					desc->irqName, desc->queue);
-
-		irq_set_affinity_hint(entry[desc->cq_vector].vector, desc->affinity_hint);
-	}
-
-	memcpy(dev->entry, entry, sizeof(struct msix_entry) * dev_entry->vec_kernel);
 
 	if(dev_entry->msix_entry != NULL)
 		kfree(dev_entry->msix_entry);
 
 	dev_entry->msix_entry = entry;
+#else
+	vecs = pci_enable_msix_range(pdev, NULL, 1, nr_vecs);
+#endif
+	if(vecs > 0)
+	for (i=0; i<irq_idx; i++) {
+		desc = &desc_arr[i];
+		ret = request_threaded_irq(vector_to_irq(dev_entry, pdev, desc->cq_vector),
+					desc->handler, desc->thread_fn, IRQF_SHARED,
+					desc->irqName, desc->queue);
+
+		irq_set_affinity_hint(vector_to_irq(dev_entry, pdev, desc->cq_vector), desc->affinity_hint);
+	}
+
+#ifdef NVMED_MSIX_HANDLER_V1
+	memcpy(dev->entry, entry, sizeof(struct msix_entry) * dev_entry->vec_kernel);
+#endif
 	kfree(desc_arr);
 
 	return NVMED_SUCCESS;
+	
 }
 
 NVMED_RESULT nvmed_register_intr_handler(NVMED_DEV_ENTRY *dev_entry,
 		NVMED_QUEUE_ENTRY *queue, unsigned int irq_vector) {
+	struct pci_dev *pdev = dev_entry->pdev;
 	NVMED_RESULT result;
 	int ret;
-
 	//Need disable & re_enable msix range?
 	if(irq_vector > dev_entry->vec_max) {
 		result = nvmed_reinitialize_msix(dev_entry, irq_vector + 1);
@@ -187,7 +207,7 @@ NVMED_RESULT nvmed_register_intr_handler(NVMED_DEV_ENTRY *dev_entry,
 	sprintf(queue->irq_name, "nvmed%dq%d", DEV_TO_INSTANCE(dev_entry->dev), queue->nvmeq->qid);
 
 	//Set new IRQ Handler
-	ret = request_irq(dev_entry->msix_entry[irq_vector].vector,
+	ret = request_irq(pci_irq_vector(pdev, irq_vector),
 			nvmed_irq_handler, IRQF_SHARED,
 			queue->irq_name, queue);
 	if(ret < 0) {
@@ -202,4 +222,14 @@ error_set_handler:
 	kfree(queue->irq_name);
 error_nvmed_register_intr:
 	return -NVMED_FAULT;
+}
+
+NVMED_RESULT nvmed_free_intr_handler(NVMED_DEV_ENTRY *dev_entry, NVMED_QUEUE_ENTRY *queue,
+		unsigned int qid) {
+	free_irq(vector_to_irq(dev_entry, dev_entry->pdev, queue->irq_vector), queue);
+	clear_bit(queue->irq_vector, dev_entry->vec_bmap);
+
+	kfree(queue->irq_name);
+
+	return NVMED_SUCCESS;
 }

@@ -636,10 +636,7 @@ static int nvmed_queue_delete_kern(NVMED_NS_ENTRY *ns_entry, unsigned int qid) {
 
 	//interrupt enabled?
 	if(queue->irq_vector) {
-		free_irq(dev_entry->msix_entry[queue->irq_vector].vector, queue);
-		clear_bit(queue->irq_vector, dev_entry->vec_bmap);
-
-		kfree(queue->irq_name);
+		nvmed_free_intr_handler(dev_entry, queue, qid);
 	}
 
 	//proc remove

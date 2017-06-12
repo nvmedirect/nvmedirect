@@ -162,6 +162,12 @@ static LIST_HEAD(nvmed_dev_list);
 
 #endif //NVMED_CORE_HEADERS
 
+#if KERNEL_VERSION_CODE < KERNEL_VERSION(4,9,0)
+	#define NVMED_MSIX_HANDLER_V1
+#else
+	#define NVMED_MSIX_HANDLER_V2
+#endif
+
 struct async_cmd_info {
 	struct kthread_work work;
 	struct kthread_worker *worker;
@@ -281,6 +287,8 @@ NVMED_QUEUE_ENTRY* nvmed_get_queue_from_qid(NVMED_NS_ENTRY *ns_entry,
 /* nvmed-intr.c */
 NVMED_RESULT nvmed_register_intr_handler(NVMED_DEV_ENTRY *dev_entry,
 		NVMED_QUEUE_ENTRY *queue, unsigned int irq_vector);
+NVMED_RESULT nvmed_free_intr_handler(NVMED_DEV_ENTRY *dev_entry, NVMED_QUEUE_ENTRY *queue,
+		unsigned int qid);
 int nvmed_irq_comm(NVMED_NS_ENTRY *ns_entry, unsigned long __user *__qid);
 
 #endif
