@@ -316,6 +316,12 @@ NVMED_HANDLE* nvmed_handle_create(NVMED_QUEUE* nvmed_queue, int flags) {
 
 	nvmed_handle = malloc(sizeof(NVMED_HANDLE));
 	nvmed_handle->queue = nvmed_queue;
+
+	if(__FLAG_ISSET(flags, HANDLE_INTERRUPT)) {
+		if(!FLAG_ISSET(nvmed_queue, QUEUE_INTERRUPT))
+			flags &= ~(HANDLE_INTERRUPT);
+	}
+
 	nvmed_handle->flags = flags;
 	nvmed_handle->offset = 0;
 	nvmed_handle->bufOffs = 0;
@@ -467,6 +473,16 @@ int nvmed_handle_feature_set(NVMED_HANDLE* nvmed_handle, int feature, int value)
 				FLAG_SET(nvmed_handle, HANDLE_HINT_DMEM);
 			else
 				FLAG_UNSET(nvmed_handle, HANDLE_HINT_DMEM);
+			break;
+
+		case HANDLE_INTERRUPT:
+			if(!FLAG_ISSET(nvmed_handle->queue, QUEUE_INTERRUPT))
+				return -NVMED_INVALID;
+
+			if(value)
+				FLAG_SET(nvmed_handle, HANDLE_INTERRUPT);
+			else
+				FLAG_UNSET(nvmed_handle, HANDLE_INTERRUPT);
 			break;
 	}
 

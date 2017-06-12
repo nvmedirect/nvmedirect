@@ -48,6 +48,7 @@ typedef enum {
 	NVMED_EXCEEDLIMIT,
 	NVMED_NOPERM,
 	NVMED_OVERQUOTA,
+	NVMED_INVALID,
 } NVMED_RESULT;
 
 typedef struct nvmed_buf {

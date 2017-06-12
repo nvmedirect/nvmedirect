@@ -24,7 +24,8 @@
 * Create an I/O queue 
 * Argument
     * nvmed : pointer to the struct NVMED
-    * flags : 0 (not used yet)
+    * flags : 
+        * QUEUE_INTERRUPT - Enable Interrupt based I/O completion
 * Return Value
     * On success, nvmed_queue_create() returns a pointer to the struct NVMED_QUEUE
     * ON error, NULL is returned
@@ -44,6 +45,7 @@
     * flags :
         * HANDLE_DIRECT_IO - Perform I/O directly
         * HANDLE_SYNC_IO   - Perform I/O synchronously
+        * HANDLE_INTERRUPT - Checking I/O completion using interrupt (must be used with interrupt enabled queue)
         * HANDLE_HINT_DMEM - Use the pre-translated buffer obtained from nvmed_get_buffer()
 * Return Value
     * On success, nvmed_handle_create() returns a pointer to the struct NVMED_HANDLE
@@ -83,6 +85,7 @@
     * flags
         * HANDLE_DIRECT_IO - perform direct I/O
         * HANDLE_SYNC_IO   - perform synchronous I/O
+        * HANDLE_INTERRUPT - Checking I/O completion using interrupt (must be used with interrupt enabled queue)
         * HANDLE_HINT_DMEM - Use the pre-translated buffer obtained from nvmed_get_buffer()
     * value : TRUE or FALSE
 * Return Value
