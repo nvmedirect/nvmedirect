@@ -45,7 +45,7 @@
 
 #define DEV_TO_ADMINQ(dev) dev->admin_q
 #define DEV_TO_NS_LIST(dev) dev->namespaces
-#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,2,0)
+#if KERNEL_VERSION_CODE >= KERNEL_VERSION(4,4,0)
 	#include "../include/nvme_hdr.h"
 
 	#if KERNEL_VERSION_CODE == KERNEL_VERSION(4,4,0)

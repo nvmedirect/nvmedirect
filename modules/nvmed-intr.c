@@ -6,7 +6,7 @@
 #include "./nvmed.h"
 
 #ifndef dev_to_msi_list
-	#define dev_to_msi_list(dev)		(&(dev)->msi_list)
+	#define dev_to_msi_list(dev)		(&to_pci_dev((dev))->msi_list)
 #endif
 
 #ifndef for_each_msi_entry
@@ -119,7 +119,7 @@ NVMED_RESULT nvmed_reinitialize_msix(NVMED_DEV_ENTRY *dev_entry,
 		entry[i].entry = i;
 	}
 
-	for_each_msi_entry(msi_desc, pdev) {
+	for_each_msi_entry(msi_desc, &pdev->dev) {
 		irq_desc = irq_to_desc(msi_desc->irq);
 		action = irq_desc->action;
 		while(action) {
