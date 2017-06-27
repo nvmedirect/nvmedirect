@@ -191,7 +191,6 @@ NVMED_RESULT nvmed_reinitialize_msix(NVMED_DEV_ENTRY *dev_entry,
 
 NVMED_RESULT nvmed_register_intr_handler(NVMED_DEV_ENTRY *dev_entry,
 		NVMED_QUEUE_ENTRY *queue, unsigned int irq_vector) {
-	struct pci_dev *pdev = dev_entry->pdev;
 	NVMED_RESULT result;
 	int ret;
 	//Need disable & re_enable msix range?
@@ -207,7 +206,7 @@ NVMED_RESULT nvmed_register_intr_handler(NVMED_DEV_ENTRY *dev_entry,
 	sprintf(queue->irq_name, "nvmed%dq%d", DEV_TO_INSTANCE(dev_entry->dev), queue->nvmeq->qid);
 
 	//Set new IRQ Handler
-	ret = request_irq(pci_irq_vector(pdev, irq_vector),
+	ret = request_irq(vector_to_irq(dev_entry, dev_entry->pdev, irq_vector),
 			nvmed_irq_handler, IRQF_SHARED,
 			queue->irq_name, queue);
 	if(ret < 0) {
