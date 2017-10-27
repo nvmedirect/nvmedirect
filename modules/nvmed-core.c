@@ -327,7 +327,7 @@ static int nvmed_get_buffer_addr(NVMED_NS_ENTRY *ns_entry, NVMED_BUF* __user *__
 	unsigned long vaddr, start_addr;
 	int ret_val = NVMED_SUCCESS;
 	int i;
-	__u64* pfnList;
+	u64* pfnList;
 	struct page *page_info;
 	
 	pgd_t *pgd;
@@ -339,7 +339,7 @@ static int nvmed_get_buffer_addr(NVMED_NS_ENTRY *ns_entry, NVMED_BUF* __user *__
 
 	start_addr = (unsigned long)u_buf.addr;
 
-	pfnList = kzalloc(sizeof(__u64) * u_buf.size, GFP_KERNEL);
+	pfnList = kzalloc(sizeof(u64) * u_buf.size, GFP_KERNEL);
 
 	mm = task->mm;
 	down_read(&mm->mmap_sem);
@@ -383,7 +383,7 @@ static int nvmed_get_buffer_addr(NVMED_NS_ENTRY *ns_entry, NVMED_BUF* __user *__
 	}
 	up_read(&mm->mmap_sem);
 	
-	copy_to_user(u_buf.pfnList, pfnList, sizeof(__u64)*u_buf.size);
+	copy_to_user(u_buf.pfnList, pfnList, sizeof(u64)*u_buf.size);
 
 	kfree(pfnList);
 
