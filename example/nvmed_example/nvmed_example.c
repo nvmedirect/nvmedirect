@@ -5,7 +5,7 @@
  * http://csl.skku.edu
  *
  * This program is free software; you can redistribute it and/or modify it
- * under the therm and condotions of the GNU General Public License,
+ * under the therm and conditions of the GNU General Public License,
  * version 2, as published by the Free Software Foundation.
  *
  * This program is distributed in the hope it will be useful, but WITHOUT
