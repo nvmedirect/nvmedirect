@@ -21,7 +21,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
-#include  "radix-tree.h"
+#include  "../../include/radix-tree.h"
 #define ARRAY_SIZE(a) (sizeof (a) / sizeof ((a)[0]))
 /*
  * Radix tree node definition.

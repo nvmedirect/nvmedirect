@@ -6,7 +6,7 @@ LDFLAGS := -pthread -shared
 SHARED_LIB = libnvmed.so
 SHARED_OBJS = lib_nvmed.o utils/radix-tree.o 
 
-INSTALL_HEADERS = ../include/nvme_hdr.h ../include/nvmed.h ../include/lib_nvmed.h ../include/radix-tree.h
+INSTALL_HEADERS = ../include/nvme_hdr.h ../include/nvmed.h ../include/lib_nvmed.h
 
 default: $(SHARED_LIB)
 
@@ -19,7 +19,7 @@ install: $(SHARED_LIB)
 	ldconfig 
 
 clean:
-	rm -f $(ALL_PROGS) $(SHARED_LIB) *.o
+	rm -f $(ALL_PROGS) $(SHARED_LIB) $(SHARED_OBJS)
 
 clobber: clean
 
