@@ -6,7 +6,7 @@ LDFLAGS := -pthread -shared
 SHARED_LIB = libnvmed.so
 SHARED_OBJS = lib_nvmed.o utils/radix-tree.o 
 
-INSTALL_HEADERS = ../include/nvme_hdr.h ../include/nvmed.h ../include/lib_nvmed.h
+INSTALL_HEADERS = ../include/nvme_hdr.h ../include/nvmed.h ../include/lib_nvmed.h ../include/radix-tree.h
 
 default: $(SHARED_LIB)
 
