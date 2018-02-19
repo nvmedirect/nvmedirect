@@ -1987,10 +1987,10 @@ int nvmed_discard(NVMED_HANDLE* nvmed_handle, unsigned long start, unsigned int 
 	range = nvmed_handle_get_prp(nvmed_handle, &__prp);
 
 	range->cattr = 0;
-	range->nlb = 0;
-	range->slba = 0;//start
+	range->nlb = len >> nvmed_handle->queue->nvmed->dev_info->lba_shift;
+	range->slba = start;
 
-	nvmed_io(nvmed_handle, nvme_cmd_dsm, __prp, 0, 0, NULL, 0, 0, HANDLE_SYNC_IO, NULL);
+	nvmed_io(nvmed_handle, nvme_cmd_dsm, __prp, 0, 0, NULL, start, len, HANDLE_SYNC_IO, NULL);
 
 	return 0;
 }
