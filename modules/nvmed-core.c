@@ -773,6 +773,7 @@ static NVMED_RESULT nvmed_scan_device(void) {
 	char dev_name[32];
 	int i;
 	int ret;
+	unsigned long lookup_ret;
 	/* for Partition support */
 	struct disk_part_iter piter;
 	struct hd_struct *part;
@@ -788,35 +789,35 @@ static NVMED_RESULT nvmed_scan_device(void) {
 		return -NVMED_FAULT;
 	}
 
-	ret = kallsyms_lookup_name("nvme_submit_admin_cmd");
-	if(ret) {
-		nvmed_submit_cmd = (typeof(nvmed_submit_cmd))(uintptr_t)ret;
+	lookup_ret = kallsyms_lookup_name("nvme_submit_admin_cmd");
+	if(lookup_ret) {
+		nvmed_submit_cmd = (typeof(nvmed_submit_cmd))(uintptr_t)lookup_ret;
 	}
 	else {
-		ret = kallsyms_lookup_name("nvme_submit_sync_cmd");
-		if(ret) {
-			nvmed_submit_cmd_mq = (typeof(nvmed_submit_cmd_mq))(uintptr_t)ret;
+		lookup_ret = kallsyms_lookup_name("nvme_submit_sync_cmd");
+		if(lookup_ret) {
+			nvmed_submit_cmd_mq = (typeof(nvmed_submit_cmd_mq))(uintptr_t)lookup_ret;
 		}
 	}
 	
-	if(!ret) {
+	if(!lookup_ret) {
 		NVMED_ERR("NVMeDirect: Can not find Symbol [nvme_submit_admin_cmd]\n");
 		return -NVMED_FAULT;
 	}
 
-	ret = kallsyms_lookup_name("nvme_set_features");
-	if(!ret) {
+	lookup_ret = kallsyms_lookup_name("nvme_set_features");
+	if(!lookup_ret) {
 		NVMED_ERR("NVMeDirect: Can not find Symbol [nvme_set_features]\n");
 		return -NVMED_FAULT;
 	}
-	nvmed_set_features_fn = (typeof(nvmed_set_features_fn))(uintptr_t)ret;
+	nvmed_set_features_fn = (typeof(nvmed_set_features_fn))(uintptr_t)lookup_ret;
 
-	ret = kallsyms_lookup_name("nvme_get_features");
-	if(!ret) {
+	lookup_ret = kallsyms_lookup_name("nvme_get_features");
+	if(!lookup_ret) {
 		NVMED_ERR("NVMeDirect: Can not find Symbol [nvme_get_features]\n");
 		return -NVMED_FAULT;
 	}
-	nvmed_get_features_fn = (typeof(nvmed_get_features_fn))(uintptr_t)ret;
+	nvmed_get_features_fn = (typeof(nvmed_get_features_fn))(uintptr_t)lookup_ret;
 
 	NVMED_PROC_ROOT = proc_mkdir("nvmed", NULL);
 	if(!NVMED_PROC_ROOT) {
