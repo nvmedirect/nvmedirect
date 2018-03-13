@@ -221,6 +221,7 @@ typedef struct nvmed_queue {
 
 	struct nvmed_iod* iod_arr;
 	unsigned int	  iod_pos;
+	pthread_spinlock_t iod_arr_lock;
 
 	int numHandle;
 

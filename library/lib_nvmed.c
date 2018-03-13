@@ -62,7 +62,7 @@ int virt_to_phys(NVMED* nvmed, void* addr, u64* paArr, unsigned int num_bytes) {
 	nvmed_buf.size = num_pages;
 	nvmed_buf.pfnList = paArr;
 	
-	ret = ioctl(nvmed->ns_fd, NVMED_IOCTL_GET_BUFFER_ADDR, &nvmed_buf);
+	ret = ioctl(nvmed->ns_fd, NVMED_IOCTL_GET_BUFFER_ADDR, nvmed_buf);
 	if(ret < 0) return 0;
 
 	return num_pages;
@@ -90,7 +90,7 @@ int nvmed_cache_alloc(NVMED* nvmed, unsigned int size, NVMED_BOOL lazy_init) {
 	req_size = size - nvmed->num_cache_size;
 	slot = malloc(sizeof(NVMED_CACHE_SLOT));
 	
-	slot->cache_info = malloc(sizeof(NVMED_CACHE) * req_size);
+	slot->cache_info = calloc(req_size, sizeof(NVMED_CACHE));
 	slot->cache_ptr = mmap(NULL, PAGE_SIZE * req_size, PROT_READ | PROT_WRITE, 
 			MAP_ANONYMOUS | MAP_LOCKED | MAP_SHARED, -1, 0);
 	slot->size = req_size;
@@ -98,7 +98,7 @@ int nvmed_cache_alloc(NVMED* nvmed, unsigned int size, NVMED_BOOL lazy_init) {
 	
 	/* Initialize memory and translate virt to phys addr */
 	if(!lazy_init) {
-		paList = malloc(sizeof(u64) * req_size);
+		paList = calloc(1, sizeof(u64) * req_size);
 		virt_to_phys(nvmed, slot->cache_ptr, paList, PAGE_SIZE * req_size);
 	}
 
@@ -119,6 +119,8 @@ int nvmed_cache_alloc(NVMED* nvmed, unsigned int size, NVMED_BOOL lazy_init) {
 
 		TAILQ_INSERT_HEAD(&nvmed->free_head, info, cache_list);
 	}
+
+	free(paList);
 	
 	nvmed->num_cache_size = size;
 
@@ -176,9 +178,11 @@ int nvmed_handle_put_prp(NVMED_HANDLE* nvmed_handle, void* buf, u64 pa) {
 void nvmed_complete_iod(NVMED_IOD* iod) {
 	NVMED_HANDLE* nvmed_handle;
 	NVMED_CACHE* cache;
+	NVMED_QUEUE* nvmed_queue;
 	int i;
 
 	nvmed_handle = iod->nvmed_handle;
+	nvmed_queue = HtoQ(nvmed_handle);
 	if(iod->prp_addr != NULL)
 		nvmed_handle_put_prp(nvmed_handle, iod->prp_addr, iod->prp_pa);
 
@@ -202,11 +206,14 @@ void nvmed_complete_iod(NVMED_IOD* iod) {
 	}
 
 	if(iod->num_cache != 0) {
+		pthread_spin_lock(&nvmed_queue->iod_arr_lock);
 		for(i=0; i<iod->num_cache; i++) {
 			cache = iod->cache[i];
 			FLAG_UNSET_SYNC(cache, CACHE_LOCKED | CACHE_DIRTY);
 			FLAG_SET_SYNC(cache, CACHE_UPTODATE);
 		}
+		free(iod->cache);
+		pthread_spin_unlock(&nvmed_queue->iod_arr_lock);
 	}
 
 	iod->status = IO_COMPLETE;
@@ -223,8 +230,11 @@ int nvmed_queue_complete(NVMED_QUEUE* nvmed_queue) {
 	volatile struct nvme_completion *cqe;
 	u16 head, phase;
 	int num_proc = 0;
+
+	pthread_spin_lock(&nvmed_queue->mngt_lock);
+
 	nvmed = nvmed_queue->nvmed;
-	
+
 	pthread_spin_lock(&nvmed_queue->cq_lock);
 	head = nvmed_queue->cq_head;
 	phase = nvmed_queue->cq_phase;
@@ -245,6 +255,7 @@ int nvmed_queue_complete(NVMED_QUEUE* nvmed_queue) {
 	}
 	if(head == nvmed_queue->cq_head && phase == nvmed_queue->cq_phase) {
 		pthread_spin_unlock(&nvmed_queue->cq_lock);
+		pthread_spin_unlock(&nvmed_queue->mngt_lock);
 		return num_proc;
 	}
 
@@ -253,6 +264,7 @@ int nvmed_queue_complete(NVMED_QUEUE* nvmed_queue) {
 	nvmed_queue->cq_head = head;
 	nvmed_queue->cq_phase = phase;
 	pthread_spin_unlock(&nvmed_queue->cq_lock);
+	pthread_spin_unlock(&nvmed_queue->mngt_lock);
 
 	return num_proc;
 }
@@ -319,7 +331,7 @@ NVMED_HANDLE* nvmed_handle_create(NVMED_QUEUE* nvmed_queue, int flags) {
 
 	pthread_spin_lock(&nvmed_queue->mngt_lock);
 
-	nvmed_handle = malloc(sizeof(NVMED_HANDLE));
+	nvmed_handle = calloc(1, sizeof(NVMED_HANDLE));
 	nvmed_handle->queue = nvmed_queue;
 
 	if(__FLAG_ISSET(flags, HANDLE_INTERRUPT)) {
@@ -333,8 +345,8 @@ NVMED_HANDLE* nvmed_handle_create(NVMED_QUEUE* nvmed_queue, int flags) {
 
 	/* PRP Buffer Create */
 	nvmed_handle->prpBuf_size = NVMED_NUM_PREALLOC_PRP;
-	nvmed_handle->prpBuf = malloc(sizeof(void *) * nvmed_handle->prpBuf_size);
-	nvmed_handle->pa_prpBuf = malloc(sizeof(u64) * nvmed_handle->prpBuf_size);
+	nvmed_handle->prpBuf = calloc(1, sizeof(void *) * nvmed_handle->prpBuf_size);
+	nvmed_handle->pa_prpBuf = calloc(1, sizeof(u64) * nvmed_handle->prpBuf_size);
 	tempPtr = mmap(NULL, PAGE_SIZE * nvmed_handle->prpBuf_size, PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_LOCKED | MAP_SHARED, -1, 0);
 	
@@ -385,6 +397,7 @@ int nvmed_handle_destroy(NVMED_HANDLE* nvmed_handle) {
 	pthread_spin_destroy(&nvmed_handle->prpBuf_lock);
 
 	munmap(nvmed_handle->prpBuf[0], PAGE_SIZE * nvmed_handle->prpBuf_size);
+	free(nvmed_handle->prpBuf);
 	free(nvmed_handle->pa_prpBuf);
 	free(nvmed_handle);
 
@@ -541,7 +554,7 @@ NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
 		return NULL;
 	}
 	
-	nvmed_queue = malloc(sizeof(NVMED_QUEUE));
+	nvmed_queue = calloc(1, sizeof(NVMED_QUEUE));
 	nvmed_queue->nvmed = nvmed;
 	nvmed_queue->flags = flags;
 	nvmed_queue->qid = create_args.qid;
@@ -583,6 +596,7 @@ NVMED_QUEUE* nvmed_queue_create(NVMED* nvmed, int flags) {
 	nvmed_queue->iod_arr = calloc(nvmed->dev_info->q_depth, sizeof(NVMED_IOD));
 	nvmed_queue->iod_pos = 0;
 
+	pthread_spin_init(&nvmed_queue->iod_arr_lock, 0);
 	pthread_spin_init(&nvmed_queue->mngt_lock, 0);
 	pthread_spin_init(&nvmed_queue->sq_lock, 0);
 	pthread_spin_init(&nvmed_queue->cq_lock, 0);
@@ -626,6 +640,8 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 		}
 	}
 
+	pthread_spin_lock(&nvmed_queue->mngt_lock);
+
 	munmap(nvmed_queue->dbs, PAGE_SIZE * 2);
 	close(nvmed_queue->db_fd);
 
@@ -635,7 +651,6 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 	munmap(nvmed_queue->sq_cmds, SQ_SIZE(nvmed->dev_info->q_depth));
 	close(nvmed_queue->sq_fd);
 
-	pthread_spin_destroy(&nvmed_queue->mngt_lock);
 	pthread_spin_destroy(&nvmed_queue->sq_lock);
 	pthread_spin_destroy(&nvmed_queue->cq_lock);
 	
@@ -648,7 +663,11 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 		
 		nvmed->numQueue--;
 	}
-	pthread_join(nvmed_queue->process_cq_intr, (void **)&status);
+
+	pthread_join(nvmed_queue->process_cq_intr, &status);
+	free(nvmed_queue->iod_arr);
+	pthread_spin_unlock(&nvmed_queue->mngt_lock);
+	pthread_spin_destroy(&nvmed_queue->mngt_lock);
 	free(nvmed_queue);
 
 	pthread_spin_unlock(&nvmed->mngt_lock);
@@ -740,7 +759,7 @@ NVMED* nvmed_open(char* path, int flags) {
 	}
 
 	//IOCTL - Get Device Info
-	dev_info = malloc(sizeof(*dev_info));
+	dev_info = calloc(1, sizeof(*dev_info));
 	ret = ioctl(fd, NVMED_IOCTL_NVMED_INFO, dev_info);
 	if(ret<0) {
 		close(fd);
@@ -750,7 +769,7 @@ NVMED* nvmed_open(char* path, int flags) {
 
 	if(dev_info->max_hw_sectors > 4096) dev_info->max_hw_sectors = 4096;
 
-	nvmed = malloc(sizeof(*nvmed));
+	nvmed = calloc(1, sizeof(*nvmed));
 	if(nvmed==NULL) {
 		free(admin_path);
 		free(dev_info);
@@ -819,6 +838,7 @@ int nvmed_close(NVMED* nvmed) {
 	close(nvmed->ns_fd);
 
 	free(nvmed->ns_path);
+	free(nvmed->dev_info);
 
 	//END PROCESS_CQ THREAD
 	if(nvmed->process_cq_status != TD_STATUS_STOP) {
@@ -844,6 +864,7 @@ int nvmed_close(NVMED* nvmed) {
 		free(slot->cache_info);
 		munmap(slot->cache_ptr, PAGE_SIZE * slot->size);
 		LIST_REMOVE(slot, slot_list);
+		free(slot);
 	}
 
 	pthread_rwlock_destroy(&nvmed->cache_radix_lock);
@@ -903,6 +924,7 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	int i, num_cache;
 
 	nvmed_queue = HtoQ(nvmed_handle);
+
 	nvmed = HtoD(nvmed_handle);
 
 	pthread_spin_lock(&nvmed_queue->sq_lock);
@@ -937,14 +959,16 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	}
 
 	if(__cache != NULL) {
+		pthread_spin_lock(&nvmed_queue->iod_arr_lock);
 		num_cache = len / PAGE_SIZE;
 		cache = __cache;
-		iod->cache = calloc(len / PAGE_SIZE, sizeof(NVMED_CACHE*));
+		iod->cache = calloc(num_cache, sizeof(NVMED_CACHE*));
 		for(i=0; i<num_cache; i++) {
 			iod->cache[i] = cache;
 			cache = cache->cache_list.tqe_next;
 		}
 		iod->num_cache = num_cache;
+		pthread_spin_unlock(&nvmed_queue->iod_arr_lock);
 	}
 
 	cmnd = &nvmed_queue->sq_cmds[nvmed_queue->sq_tail];
@@ -1155,7 +1179,7 @@ unsigned int nvmed_check_buffer(void* nvmed_buf) {
  *  [User Buf(4KB * num_pages)][MAGIC(4Bytes)][Num Pages(4Bytes)][PA LIST u64 * num_pages]
  */
 void* nvmed_get_buffer(NVMED* nvmed, unsigned int num_pages) {
-	struct nvmed_buf nvmed_buf;
+	struct nvmed_buf nvmed_buf = {0};
 	void *bufAddr;
 	int ret;
 	unsigned int *magic, *size;
