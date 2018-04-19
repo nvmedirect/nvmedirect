@@ -62,7 +62,7 @@ int virt_to_phys(NVMED* nvmed, void* addr, u64* paArr, unsigned int num_bytes) {
 	nvmed_buf.size = num_pages;
 	nvmed_buf.pfnList = paArr;
 	
-	ret = ioctl(nvmed->ns_fd, NVMED_IOCTL_GET_BUFFER_ADDR, nvmed_buf);
+	ret = ioctl(nvmed->ns_fd, NVMED_IOCTL_GET_BUFFER_ADDR, &nvmed_buf);
 	if(ret < 0) return 0;
 
 	return num_pages;
