@@ -38,7 +38,7 @@ extern "C" {
 #define NVMED_BUF_MAGIC	0x4E564DED		//NVM'ED'
 #define NVMED_NUM_PREALLOC_PRP	64
 #define NVMED_CACHE_FORCE_EVICT_MAX	4
-#define NVMED_CACHE_INIT_NUM_PAGES	2560	
+#define NVMED_CACHE_INIT_NUM_PAGES	(256*1024*16)	// 256 -> 1MB
 
 #define COMPILER_BARRIER() asm volatile("" ::: "memory")
 
@@ -53,13 +53,17 @@ typedef enum {
 
 #define FLAG_SET(obj, items) (obj)->flags |= items
 #define FLAG_SET_FORCE(obj, items) (obj)->flags = items
-#define FLAG_SET_SYNC(obj, items) __sync_or_and_fetch(&obj->flags, items)
+//#define FLAG_SET_SYNC(obj, items) __sync_or_and_fetch(&obj->flags, items)
+#define FLAG_SET_SYNC(obj, items) FLAG_SET(obj, items)
 #define FLAG_UNSET(obj, items) (obj)->flags &= ~items
-#define FLAG_UNSET_SYNC(obj, items) __sync_and_and_fetch(&obj->flags, ~items)
+//#define FLAG_UNSET_SYNC(obj, items) __sync_and_and_fetch(&obj->flags, ~items)
+#define FLAG_UNSET_SYNC(obj, items) FLAG_UNSET(obj, items)
 #define __FLAG_ISSET(flags, items) (flags & items)? NVMED_TRUE:NVMED_FALSE
-#define __FLAG_ISSET_SYNC(obj , items) __sync_and_and_fetch(&obj->flags, items)? NVMED_TRUE:NVMED_FALSE
+#define __FLAG_ISSET_SYNC(flags, items) (flags & items)? NVMED_TRUE:NVMED_FALSE
+//#define __FLAG_ISSET_SYNC(obj , items) __sync_and_and_fetch(&obj->flags, items)? true:false
 #define FLAG_ISSET(obj, items) __FLAG_ISSET((obj)->flags, items)
-#define FLAG_ISSET_SYNC(obj, items) __FLAG_ISSET_SYNC(obj, items)
+#define FLAG_ISSET_SYNC(obj, items) __FLAG_ISSET((obj)->flags, items)
+//#define FLAG_ISSET_SYNC(obj, items) __FLAG_ISSET_SYNC(obj, items)
 
 #define INC_SYNC(obj)	__sync_add_and_fetch(&obj, 1);
 #define DEC_SYNC(obj)	__sync_sub_and_fetch(&obj, 1);
@@ -229,6 +233,8 @@ typedef struct nvmed_queue {
 
 	pthread_t process_cq_intr;
 
+	LIST_HEAD(handle_list, nvmed_handle) handle_head;
+
 	LIST_ENTRY(nvmed_queue) queue_list;
 } NVMED_QUEUE;
 
@@ -238,9 +244,9 @@ typedef struct nvmed_handle {
 	u32	flags;
 
 	ssize_t (*read_func)(struct nvmed_handle*, u8, 
-			void*, unsigned long, unsigned int, void*);
+			void*, unsigned long, unsigned int, NVMED_BOOL, void*);
 	ssize_t (*write_func)(struct nvmed_handle*, u8, 
-			void*, unsigned long, unsigned int, void*);
+			void*, unsigned long, unsigned int, NVMED_BOOL, void*);
 
 	off_t	offset;
 	off_t bufOffs;
@@ -249,6 +255,7 @@ typedef struct nvmed_handle {
 	NVMED_QUEUE* (*mq_get_queue)(struct nvmed_handle*, u8, 
 			unsigned long, unsigned int);
 
+	void* prpBase;
 	pthread_spinlock_t prpBuf_lock;
 	void** prpBuf;
 	u64* pa_prpBuf;
@@ -257,7 +264,16 @@ typedef struct nvmed_handle {
 	int prpBuf_head;
 	int prpBuf_tail;
 
+	unsigned int dispatched_io;
+
+	TAILQ_HEAD(io_list, nvmed_cache) io_head;
+	int num_io_head;
+	pthread_spinlock_t io_head_lock;
+
 	LIST_HEAD(handle_cache_list, nvmed_cache) dirty_list;
+	pthread_spinlock_t 	dirty_list_lock;
+
+	LIST_ENTRY(nvmed_handle) handle_list;
 } NVMED_HANDLE;
 
 typedef struct nvmed_aio_ctx {
@@ -279,13 +295,16 @@ typedef struct nvmed_aio_ctx {
 
 typedef struct nvmed_cache {
 	unsigned int lpaddr;
-	u32 flags;
+	volatile u32 flags;
 	u32 ref;
 	
 	u64 paddr;
 	void* ptr;
 
+	NVMED_HANDLE* handle;
+
 	TAILQ_ENTRY(nvmed_cache) cache_list;
+	TAILQ_ENTRY(nvmed_cache) io_list;
 	LIST_ENTRY(nvmed_cache) handle_cache_list;
 } NVMED_CACHE;
 
@@ -341,9 +360,11 @@ void nvmed_put_buffer(void*);
 
 off_t nvmed_lseek(NVMED_HANDLE*, off_t, int);
 ssize_t nvmed_read(NVMED_HANDLE*, void*, size_t);
+ssize_t nvmed_pread(NVMED_HANDLE*, void*, size_t, off_t);
 ssize_t nvmed_write(NVMED_HANDLE*, void*, size_t);
+ssize_t nvmed_pwrite(NVMED_HANDLE*, void*, size_t, off_t);
 
-int nvmed_flush(NVMED_HANDLE*);
+void nvmed_flush(NVMED_HANDLE*);
 int nvmed_discard(NVMED_HANDLE*, unsigned long, unsigned int);
 
 int nvmed_aio_queue_submit(NVMED_HANDLE*);

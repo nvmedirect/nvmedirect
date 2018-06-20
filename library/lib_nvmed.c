@@ -39,14 +39,15 @@
 #define nvmed_err(fmt, args...) fprintf(stderr, fmt, ##args)
 
 ssize_t nvmed_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf, 
-		unsigned long start_lba, unsigned int len, void* private);
+		unsigned long start_lba, unsigned int len, NVMED_BOOL pio, void* private);
 ssize_t nvmed_cache_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, NVMED_CACHE *__cache, 
 		unsigned long start_lba, unsigned int len, int __flag);
 ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf, 
-		unsigned long start_lba, unsigned int len, void* private);
+		unsigned long start_lba, unsigned int len, NVMED_BOOL pio, void* private);
 ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf, 
-		unsigned long start_lba, unsigned int len, void* private);
+		unsigned long start_lba, unsigned int len, NVMED_BOOL pio, void* private);
 
+void nvmed_flush_handle(NVMED_HANDLE* nvmed_handle);
 /*
  * Translate virtual memory address to physical memory address
  */
@@ -78,7 +79,6 @@ int nvmed_cache_alloc(NVMED* nvmed, unsigned int size, NVMED_BOOL lazy_init) {
 	NVMED_CACHE *info;
 	u64 *paList;
 
-	pthread_spin_lock(&nvmed->mngt_lock);
 
 	if(size == 0) return -NVMED_FAULT;
 	if(size == nvmed->num_cache_size) return 0;
@@ -87,12 +87,18 @@ int nvmed_cache_alloc(NVMED* nvmed, unsigned int size, NVMED_BOOL lazy_init) {
 		return -NVMED_FAULT;
 	}
 	
+	pthread_spin_lock(&nvmed->mngt_lock);
+
 	req_size = size - nvmed->num_cache_size;
 	slot = malloc(sizeof(NVMED_CACHE_SLOT));
-	
 	slot->cache_info = calloc(req_size, sizeof(NVMED_CACHE));
 	slot->cache_ptr = mmap(NULL, PAGE_SIZE * req_size, PROT_READ | PROT_WRITE, 
 			MAP_ANONYMOUS | MAP_LOCKED | MAP_SHARED, -1, 0);
+	if(slot->cache_ptr == NULL) {
+		nvmed_err("Failed: Cache Allocation : %u pages\n", req_size);
+		pthread_spin_unlock(&nvmed->mngt_lock);
+		return -1;
+	}
 	slot->size = req_size;
 	LIST_INSERT_HEAD(&nvmed->slot_head, slot, slot_list);
 	
@@ -177,12 +183,14 @@ int nvmed_handle_put_prp(NVMED_HANDLE* nvmed_handle, void* buf, u64 pa) {
  */
 void nvmed_complete_iod(NVMED_IOD* iod) {
 	NVMED_HANDLE* nvmed_handle;
+	NVMED* nvmed;
 	NVMED_CACHE* cache;
-	NVMED_QUEUE* nvmed_queue;
+	//NVMED_QUEUE* nvmed_queue;
 	int i;
 
 	nvmed_handle = iod->nvmed_handle;
-	nvmed_queue = HtoQ(nvmed_handle);
+	//nvmed_queue = HtoQ(nvmed_handle);
+	nvmed = HtoD(nvmed_handle);
 	if(iod->prp_addr != NULL)
 		nvmed_handle_put_prp(nvmed_handle, iod->prp_addr, iod->prp_pa);
 
@@ -206,16 +214,32 @@ void nvmed_complete_iod(NVMED_IOD* iod) {
 	}
 
 	if(iod->num_cache != 0) {
-		pthread_spin_lock(&nvmed_queue->iod_arr_lock);
+		//pthread_spin_lock(&nvmed_queue->iod_arr_lock);
 		for(i=0; i<iod->num_cache; i++) {
 			cache = iod->cache[i];
-			FLAG_UNSET_SYNC(cache, CACHE_LOCKED | CACHE_DIRTY);
+			pthread_spin_lock(&nvmed->cache_list_lock);
+			
+			pthread_spin_lock(&nvmed_handle->dirty_list_lock);
+			FLAG_UNSET_SYNC(cache, CACHE_LOCKED);
+			FLAG_UNSET_SYNC(cache, CACHE_WRITEBACK);
+
+			if(FLAG_ISSET_SYNC(cache, CACHE_DIRTY)) {
+				LIST_REMOVE(cache, handle_cache_list);
+				FLAG_UNSET_SYNC(cache, CACHE_DIRTY);
+			}
+			else {
+				//nvmed_err("Rxxxxx %u\n", cache->lpaddr);
+			}
+
 			FLAG_SET_SYNC(cache, CACHE_UPTODATE);
+			pthread_spin_unlock(&nvmed_handle->dirty_list_lock);
+
+			pthread_spin_unlock(&nvmed->cache_list_lock);
 		}
 		free(iod->cache);
-		pthread_spin_unlock(&nvmed_queue->iod_arr_lock);
+		//pthread_spin_unlock(&nvmed_queue->iod_arr_lock);
 	}
-
+	__sync_fetch_and_sub(&nvmed_handle->dispatched_io, 1);
 	iod->status = IO_COMPLETE;
 }
 
@@ -230,8 +254,6 @@ int nvmed_queue_complete(NVMED_QUEUE* nvmed_queue) {
 	volatile struct nvme_completion *cqe;
 	u16 head, phase;
 	int num_proc = 0;
-
-	pthread_spin_lock(&nvmed_queue->mngt_lock);
 
 	nvmed = nvmed_queue->nvmed;
 
@@ -255,7 +277,6 @@ int nvmed_queue_complete(NVMED_QUEUE* nvmed_queue) {
 	}
 	if(head == nvmed_queue->cq_head && phase == nvmed_queue->cq_phase) {
 		pthread_spin_unlock(&nvmed_queue->cq_lock);
-		pthread_spin_unlock(&nvmed_queue->mngt_lock);
 		return num_proc;
 	}
 
@@ -264,7 +285,6 @@ int nvmed_queue_complete(NVMED_QUEUE* nvmed_queue) {
 	nvmed_queue->cq_head = head;
 	nvmed_queue->cq_phase = phase;
 	pthread_spin_unlock(&nvmed_queue->cq_lock);
-	pthread_spin_unlock(&nvmed_queue->mngt_lock);
 
 	return num_proc;
 }
@@ -343,13 +363,15 @@ NVMED_HANDLE* nvmed_handle_create(NVMED_QUEUE* nvmed_queue, int flags) {
 	nvmed_handle->offset = 0;
 	nvmed_handle->bufOffs = 0;
 
+	nvmed_handle->dispatched_io = 0;
+
 	/* PRP Buffer Create */
 	nvmed_handle->prpBuf_size = NVMED_NUM_PREALLOC_PRP;
 	nvmed_handle->prpBuf = calloc(1, sizeof(void *) * nvmed_handle->prpBuf_size);
 	nvmed_handle->pa_prpBuf = calloc(1, sizeof(u64) * nvmed_handle->prpBuf_size);
 	tempPtr = mmap(NULL, PAGE_SIZE * nvmed_handle->prpBuf_size, PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_LOCKED | MAP_SHARED, -1, 0);
-	
+
 	memset(tempPtr, 0, PAGE_SIZE * nvmed_handle->prpBuf_size);
 
 	virt_to_phys(nvmed_queue->nvmed, tempPtr, nvmed_handle->pa_prpBuf, 
@@ -372,9 +394,18 @@ NVMED_HANDLE* nvmed_handle_create(NVMED_QUEUE* nvmed_queue, int flags) {
 		nvmed_handle->write_func 	= nvmed_buffer_write;
 	}
 
+	LIST_INIT(&nvmed_handle->dirty_list);
+	pthread_spin_init(&nvmed_handle->dirty_list_lock, 0);
+
 	nvmed_queue->numHandle++;
+	LIST_INSERT_HEAD(&nvmed_queue->handle_head, nvmed_handle, handle_list);
+
+	TAILQ_INIT(&nvmed_handle->io_head);
+	nvmed_handle->num_io_head = 0;
 
 	pthread_spin_init(&nvmed_handle->prpBuf_lock, 0);
+
+	pthread_spin_init(&nvmed_handle->io_head_lock, 0);
 
 	pthread_spin_unlock(&nvmed_queue->mngt_lock);
 
@@ -388,15 +419,20 @@ int nvmed_handle_destroy(NVMED_HANDLE* nvmed_handle) {
 	NVMED_QUEUE* nvmed_queue;
 
 	if(nvmed_handle == NULL) return -NVMED_NOENTRY;
+	nvmed_flush_handle(nvmed_handle);
+
+	while(nvmed_handle->dispatched_io) {}
+
 	nvmed_queue = HtoQ(nvmed_handle);
 
 	pthread_spin_lock(&nvmed_queue->mngt_lock);
 
 	nvmed_queue->numHandle--;
-	
+	LIST_REMOVE(nvmed_handle, handle_list);
+
 	pthread_spin_destroy(&nvmed_handle->prpBuf_lock);
 
-	munmap(nvmed_handle->prpBuf[0], PAGE_SIZE * nvmed_handle->prpBuf_size);
+	//munmap(nvmed_handle->prpBuf[0], PAGE_SIZE * nvmed_handle->prpBuf_size);
 	free(nvmed_handle->prpBuf);
 	free(nvmed_handle->pa_prpBuf);
 	free(nvmed_handle);
@@ -622,14 +658,13 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 	NVMED* nvmed;
 	void *status;
 	int ret;
-	
+
 	if(nvmed_queue == NULL) return -NVMED_NOENTRY;
 	if(nvmed_queue->numHandle) return -NVMED_FAULT;
 
 	nvmed = nvmed_queue->nvmed;
 	
 	pthread_spin_lock(&nvmed->mngt_lock);
-	
 	if(nvmed->process_cq_status != TD_STATUS_STOP) {
 		while(nvmed->process_cq_status == TD_STATUS_SUSPEND ||
 				nvmed->process_cq_status == TD_STATUS_REQ_SUSPEND);
@@ -664,8 +699,8 @@ int nvmed_queue_destroy(NVMED_QUEUE* nvmed_queue) {
 		nvmed->numQueue--;
 	}
 
-	pthread_join(nvmed_queue->process_cq_intr, &status);
 	free(nvmed_queue->iod_arr);
+	pthread_join(nvmed_queue->process_cq_intr, &status);
 	pthread_spin_unlock(&nvmed_queue->mngt_lock);
 	pthread_spin_destroy(&nvmed_queue->mngt_lock);
 	free(nvmed_queue);
@@ -700,7 +735,9 @@ void* nvmed_process_cq(void *data) {
 			if(FLAG_ISSET(nvmed_queue, QUEUE_MANUAL_CQ))
 				continue;
 
+			pthread_spin_lock(&nvmed_queue->mngt_lock);
 			nvmed_queue_complete(nvmed_queue);
+			pthread_spin_unlock(&nvmed_queue->mngt_lock);
 		}
 	};
 
@@ -745,6 +782,7 @@ NVMED* nvmed_open(char* path, int flags) {
 	int fd;
 	int ret;
 	unsigned int num_cache;
+	int idx;
 
 	result = get_path_from_blkdev(path, &admin_path);
 	if(result < 0) {
@@ -815,7 +853,8 @@ NVMED* nvmed_open(char* path, int flags) {
 	
 		// CACHE - INIT
 		LIST_INIT(&nvmed->slot_head);
-		nvmed_cache_alloc(nvmed, num_cache, 
+		for(idx=0; idx<=num_cache; idx+=(256 * 100))
+			nvmed_cache_alloc(nvmed, idx, 
 				__FLAG_ISSET(flags, NVMED_CACHE_LAZY_INIT));
 
 		INIT_RADIX_TREE(&nvmed->cache_root);
@@ -930,13 +969,13 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	pthread_spin_lock(&nvmed_queue->sq_lock);
 
 	while(1) {
-		target_id = nvmed_queue->iod_pos++; iod = nvmed_queue->iod_arr + target_id;
+		target_id = nvmed_queue->iod_pos++;
+		iod = nvmed_queue->iod_arr + target_id;
 		if(nvmed_queue->iod_pos == nvmed->dev_info->q_depth)
 			nvmed_queue->iod_pos = 0;
 		if(iod->status != IO_INIT)
 			break;
 	}
-
 	iod->sq_id = nvmed_queue->sq_tail;
 	iod->prp_addr = prp2_addr;
 	iod->prp_pa = prp2;
@@ -965,7 +1004,7 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 		iod->cache = calloc(num_cache, sizeof(NVMED_CACHE*));
 		for(i=0; i<num_cache; i++) {
 			iod->cache[i] = cache;
-			cache = cache->cache_list.tqe_next;
+			cache = cache->io_list.tqe_next;
 		}
 		iod->num_cache = num_cache;
 		pthread_spin_unlock(&nvmed_queue->iod_arr_lock);
@@ -1016,6 +1055,8 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 
 	COMPILER_BARRIER();
 	*(volatile u32 *)nvmed_queue->sq_db = nvmed_queue->sq_tail;
+	__sync_fetch_and_add(&nvmed_handle->dispatched_io, 1);
+	//nvmed_handle->dispatched_io++;
 
 	pthread_spin_unlock(&nvmed_queue->sq_lock);
 	
@@ -1038,92 +1079,84 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	return len;
 }
 
+unsigned int __evict_handle_dirty_page(NVMED_HANDLE* handle) {
+	unsigned long io_start_lba;
+	unsigned int io_len;
+
+	io_start_lba = TAILQ_FIRST(&handle->io_head)->lpaddr;
+	io_len = TAILQ_LAST(&handle->io_head, io_list)->lpaddr;
+	io_len-= io_start_lba;
+	io_len+= 1;
+
+	nvmed_cache_io_rw(handle, nvme_cmd_write, \
+			handle->io_head.tqh_first, \
+			io_start_lba * PAGE_SIZE, io_len * PAGE_SIZE, handle->flags | HANDLE_SYNC_IO);
+	while (handle->io_head.tqh_first != NULL)
+		TAILQ_REMOVE(&handle->io_head, handle->io_head.tqh_first, io_list);
+
+	//		TAILQ_INIT(&handle->io_head);
+	
+	handle->num_io_head = 0;
+
+	return io_len;
+}
+
 /* Get CACHE from free list or evict */
 NVMED_CACHE* nvmed_get_cache(NVMED_HANDLE* nvmed_handle) {
 	NVMED* nvmed = HtoD(nvmed_handle);
-	NVMED_CACHE *cache = nvmed->free_head.tqh_first;
-	NVMED_CACHE *__cache;
+	NVMED_HANDLE* handle;
+	NVMED_CACHE *cache;
 	NVMED_CACHE *ret_cache;
-	int i;
-	unsigned int start_lpaddr, end_lpaddr;
 	TAILQ_HEAD(cache_list, nvmed_cache) temp_head;
 
 	pthread_rwlock_wrlock(&nvmed->cache_radix_lock);
 	pthread_spin_lock(&nvmed->cache_list_lock);
 
+restart:
+	cache = nvmed->free_head.tqh_first;
 	if(cache==NULL)  {
 		//HEAD -> LRU, //TAIL -> MRU
 		//EVICT - LRU
 		cache = nvmed->lru_head.tqh_first;
 		if(!FLAG_ISSET(cache, CACHE_DIRTY)) {
 			TAILQ_REMOVE(&nvmed->lru_head, cache, cache_list);
-			LIST_REMOVE(cache, handle_cache_list);
 			radix_tree_delete(&nvmed->cache_root, cache->lpaddr);
 			FLAG_SET_FORCE(cache, 0);
 			ret_cache = cache;
 		}
 		else {
+			//////////// handle io_list evict!!
 			TAILQ_INIT(&temp_head);
 			
 			while(FLAG_ISSET_SYNC(cache, CACHE_LOCKED) || cache->ref != 0) {
+				pthread_spin_unlock(&nvmed->cache_list_lock);
+				pthread_rwlock_unlock(&nvmed->cache_radix_lock);
 				usleep(1);
+				pthread_rwlock_wrlock(&nvmed->cache_radix_lock);
+				pthread_spin_lock(&nvmed->cache_list_lock);
+				goto restart;
+			}
+	
+			pthread_spin_unlock(&nvmed->cache_list_lock);
+			pthread_rwlock_unlock(&nvmed->cache_radix_lock);
+		
+			handle = cache->handle;
+			pthread_spin_lock(&handle->io_head_lock);
+
+			if(!FLAG_ISSET(cache, CACHE_DIRTY)) {
+				pthread_rwlock_wrlock(&nvmed->cache_radix_lock);
+				pthread_spin_lock(&nvmed->cache_list_lock);
+				goto restart;
 			}
 			
-			start_lpaddr = cache->lpaddr;
-			end_lpaddr = cache->lpaddr;
-			
-			__cache = cache->cache_list.tqe_next;
+			__evict_handle_dirty_page(handle);
 
-			TAILQ_REMOVE(&nvmed->lru_head, cache, cache_list);
-			radix_tree_delete(&nvmed->cache_root, cache->lpaddr);
-			TAILQ_INSERT_HEAD(&temp_head, cache, cache_list);
+			pthread_spin_unlock(&handle->io_head_lock);
 
-			for(i=1; i<NVMED_CACHE_FORCE_EVICT_MAX; i++) {
-				cache = __cache;
-				if(FLAG_ISSET_SYNC(cache, CACHE_LOCKED)) break;
-				if(!FLAG_ISSET(cache, CACHE_DIRTY)) break;
-				if(start_lpaddr != 0 && cache->lpaddr == start_lpaddr-1 ) {
-					//front_merge
-					start_lpaddr--;
-					__cache = cache->cache_list.tqe_next;
-					TAILQ_REMOVE(&nvmed->lru_head, cache, cache_list);
-					radix_tree_delete(&nvmed->cache_root, cache->lpaddr);
-					TAILQ_INSERT_HEAD(&temp_head, cache, cache_list);
+			pthread_rwlock_wrlock(&nvmed->cache_radix_lock);
+			pthread_spin_lock(&nvmed->cache_list_lock);
 
-					continue;
-				}
-				else if(cache->lpaddr == end_lpaddr+1) {
-					//back_merge
-					end_lpaddr++;
-					__cache = cache->cache_list.tqe_next;
-					TAILQ_REMOVE(&nvmed->lru_head, cache, cache_list);
-					radix_tree_delete(&nvmed->cache_root, cache->lpaddr);
-					TAILQ_INSERT_TAIL(&temp_head, cache, cache_list);
-
-					continue;
-				}
-				else {
-					break;
-				}
-			}
-			
-			if(FLAG_ISSET(cache, CACHE_DIRTY))
-			nvmed_cache_io_rw(nvmed_handle, nvme_cmd_write, temp_head.tqh_first, 
-					start_lpaddr * PAGE_SIZE, (end_lpaddr - start_lpaddr) * PAGE_SIZE, 
-					HANDLE_SYNC_IO);
-
-			cache = temp_head.tqh_first;
-			FLAG_SET_FORCE(cache, 0);
-			ret_cache = cache;
-
-			TAILQ_REMOVE(&temp_head, cache, cache_list);
-			LIST_REMOVE(cache, handle_cache_list);
-
-			while(temp_head.tqh_first != NULL) {
-				TAILQ_REMOVE(&temp_head, temp_head.tqh_first, cache_list);
-				TAILQ_INSERT_HEAD(&nvmed->free_head, temp_head.tqh_first, cache_list);
-				nvmed->num_cache_usage--;
-			}
+			goto restart;
 		}
 	}
 	else {
@@ -1141,7 +1174,7 @@ NVMED_CACHE* nvmed_get_cache(NVMED_HANDLE* nvmed_handle) {
 	INIT_SYNC(ret_cache->ref);
 	pthread_spin_unlock(&nvmed->cache_list_lock);
 	pthread_rwlock_unlock(&nvmed->cache_radix_lock);
-
+	//fprintf(stderr, "%s: %p\n", __func__, ret_cache);
 	return ret_cache;
 }
 
@@ -1310,14 +1343,14 @@ int make_prp_list_from_cache(NVMED_HANDLE* nvmed_handle, NVMED_CACHE *__cache,
 	cache = __cache;
 	__prp1 = cache->paddr;
 	if(num_list == 2) {
-		cache = cache->cache_list.tqe_next;
+		cache = cache->io_list.tqe_next;
 		__prp2 = cache->paddr;
 	}
 	else {
 		prpBuf = nvmed_handle_get_prp(nvmed_handle, &__prp2);
 		*prp2_addr = prpBuf;
 		for(i=1; i<num_list; i++) {
-			cache = cache->cache_list.tqe_next;
+			cache = cache->io_list.tqe_next;
 			prpBuf[i-1] = cache->paddr;
 		}
 	}
@@ -1379,7 +1412,7 @@ ssize_t nvmed_cache_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, NVMED_CACHE *__
 	num_cache = len / PAGE_SIZE;
 	while(num_cache-- > 0) {
 		FLAG_SET_SYNC(cache, CACHE_LOCKED);
-		cache = cache->cache_list.tqe_next;
+		cache = cache->io_list.tqe_next;
 	}
 
 	cache = __cache;
@@ -1404,7 +1437,7 @@ ssize_t nvmed_cache_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, NVMED_CACHE *__
 		io_lba += io;
 
 		while(num_cache-- > 0)
-			cache = cache->cache_list.tqe_next;
+			cache = cache->io_list.tqe_next;
 	}
 	
 	return total_io;
@@ -1433,7 +1466,7 @@ NVMED_BOOL nvmed_rw_verify_area(NVMED_HANDLE* nvmed_handle,
  * Make I/O request from User memory
  */
 ssize_t nvmed_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf, 
-		unsigned long start_lba, unsigned int len, void* private) {
+		unsigned long start_lba, unsigned int len, NVMED_BOOL pio, void* private) {
 	NVMED_AIO_CTX* context = private;
 	NVMED_QUEUE* nvmed_queue;
 	NVMED* nvmed;
@@ -1510,7 +1543,8 @@ ssize_t nvmed_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 		remain -= io;
 		total_io += io;
 		io_lba += io;
-		nvmed_handle->offset += io;
+		if(!pio)
+			nvmed_handle->offset += io;
 		next_buf += io;
 	}
 
@@ -1573,7 +1607,7 @@ int nvmed_aio_enqueue(NVMED_AIO_CTX* context) {
 	context->num_complete_io = 0;
 
 	nvmed_io_rw(context->handle, context->opcode,
-				context->buf, context->start_lba, context->len, context);
+				context->buf, context->start_lba, context->len, NVMED_FALSE, context);
 
 	return NVMED_AIO_QUEUED;
 }
@@ -1590,7 +1624,7 @@ int nvmed_aio_write(NVMED_AIO_CTX* context) {
 }
 
 ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf, 
-		unsigned long start_lba, unsigned int len, void* private) {
+		unsigned long start_lba, unsigned int len, NVMED_BOOL pio, void* private) {
 	NVMED_QUEUE *nvmed_queue = HtoQ(nvmed_handle);
 	NVMED *nvmed = nvmed_queue->nvmed;
 	NVMED_CACHE **cacheP, *cache, *__cache;
@@ -1628,7 +1662,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 			final_num_blocks = 0;
 			for(i=0; i<find_blocks; i++) {
 				cache = *(cacheP + i);
-				if(cache->lpaddr >= start_block && end_block <= cache->lpaddr)
+				if(cache->lpaddr >= start_block && end_block >= cache->lpaddr)
 					final_num_blocks++;
 			}
 			find_blocks = final_num_blocks;
@@ -1639,7 +1673,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 		//read all
 		for(i=0; i<io_blocks; i++) {
 			cache = nvmed_get_cache(nvmed_handle);
-			TAILQ_INSERT_TAIL(&temp_head, cache, cache_list);
+			TAILQ_INSERT_TAIL(&temp_head, cache, io_list);
 		}
 		nvmed_cache_io_rw(nvmed_handle, nvme_cmd_read, temp_head.tqh_first, 
 				start_block * PAGE_SIZE, io_blocks * PAGE_SIZE, HANDLE_SYNC_IO);
@@ -1648,9 +1682,10 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 		while(temp_head.tqh_first != NULL) {
 			cache = temp_head.tqh_first;
 
-			TAILQ_REMOVE(&temp_head, cache, cache_list);
-
+			TAILQ_REMOVE(&temp_head, cache, io_list);
+			
 			cache->lpaddr = start_block + cache_idx;
+
 			FLAG_SET_SYNC(cache, CACHE_LRU | CACHE_UPTODATE);
 
 			if(cache_idx==0) {
@@ -1662,6 +1697,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 					buf_copy_size = PAGE_SIZE - cache_offs;
 				}
 				memcpy(buf, cache->ptr + cache_offs, buf_copy_size);
+				////?????? buf_offs = buf_copy_size;
 				buf_offs+= buf_copy_size;
 			}
 			else if(cache_idx == io_blocks -1) {
@@ -1712,7 +1748,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 
 						while(temp_head.tqh_first != NULL) {
 							__cache = temp_head.tqh_first;
-							TAILQ_REMOVE(&temp_head, __cache, cache_list);
+							TAILQ_REMOVE(&temp_head, __cache, io_list);
 							TAILQ_INSERT_TAIL(&nvmed->lru_head, __cache, cache_list);
 							radix_tree_insert(&nvmed->cache_root, __cache->lpaddr, __cache);
 							FLAG_SET_SYNC(__cache, CACHE_LRU);
@@ -1738,7 +1774,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 
 					cache = nvmed_get_cache(nvmed_handle);
 					cache->lpaddr = block_idx;
-					TAILQ_INSERT_TAIL(&temp_head, cache, cache_list);
+					TAILQ_INSERT_TAIL(&temp_head, cache, io_list);
 					io_nums++;
 					if(io_nums == 1) io_start = cache->lpaddr;
 
@@ -1763,7 +1799,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 
 			while(temp_head.tqh_first != NULL) {
 				__cache = temp_head.tqh_first;
-				TAILQ_REMOVE(&temp_head, __cache, cache_list);
+				TAILQ_REMOVE(&temp_head, __cache, io_list);
 				TAILQ_INSERT_TAIL(&nvmed->lru_head, __cache, cache_list);
 				radix_tree_insert(&nvmed->cache_root, __cache->lpaddr, __cache);
 				FLAG_SET_SYNC(__cache, CACHE_LRU);
@@ -1784,6 +1820,7 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 				else {
 					buf_copy_size = PAGE_SIZE - cache_offs;
 				}
+				////?????memcpy(buf, cache->ptr + cache_offs, buf_copy_size);
 				memcpy(buf + buf_offs, cache->ptr + cache_offs, buf_copy_size);
 				buf_offs = buf_copy_size;
 			}
@@ -1804,23 +1841,24 @@ ssize_t nvmed_buffer_read(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 
 	free(cacheP);
 
-	nvmed_handle->offset += total_read;
+	if(!pio)
+		nvmed_handle->offset += total_read;
 
 	return total_read;
 }
 
 ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf, 
-		unsigned long start_lba, unsigned int len, void* private) {
+		unsigned long start_lba, unsigned int len, NVMED_BOOL pio, void* private) {
 	NVMED *nvmed = HtoD(nvmed_handle);
 	NVMED_CACHE **cacheP, *cache;
 	ssize_t total_write = 0;
 	unsigned long start_block, end_block, io_blocks;
-	unsigned int buf_offs = 0, buf_copy_size = 0, cache_offs = 0;
-	unsigned int  find_blocks;
-	int block_idx=0, cache_idx=0;
+	unsigned int buf_offs, buf_copy_size, cache_offs;
+	unsigned int  find_blocks, final_num_blocks;
+	int i, block_idx=0, cache_idx=0;
 	NVMED_BOOL found_from_cache;
 	TAILQ_HEAD(cache_list, nvmed_cache) temp_head;
-
+	//fprintf(stderr, "%s: %lu %u\n", __func__, start_lba, len);
 	if(!nvmed_rw_verify_area(nvmed_handle, start_lba, len))
 		return -1;
 
@@ -1836,12 +1874,29 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 	pthread_rwlock_unlock(&nvmed->cache_radix_lock);
 	
 	TAILQ_INIT(&temp_head);
+	if(find_blocks > 0) {
+		cache = *(cacheP + 0);
+		if(cache->lpaddr > end_block)
+			find_blocks = 0;
+		else {
+			final_num_blocks = 0;
+			for(i=0; i<find_blocks; i++) {
+				cache = *(cacheP + i);
+				if(cache->lpaddr >= start_block && end_block <= cache->lpaddr)
+					final_num_blocks++;
+			}
+			find_blocks = final_num_blocks;
+		}
+	}
+
 	//find all in cache?
 	if(find_blocks == io_blocks) {
 		for(cache_idx=0; cache_idx<find_blocks; cache_idx++) {
 			cache = *(cacheP + cache_idx);
 
-			while(FLAG_ISSET_SYNC(cache, CACHE_LOCKED)) usleep(1);
+			while(FLAG_ISSET_SYNC(cache, CACHE_LOCKED)) {
+				usleep(1);
+			}
 
 			if(cache_idx==0) {
 				cache_offs = start_lba % PAGE_SIZE;
@@ -1864,13 +1919,21 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 				buf_offs+= PAGE_SIZE;
 			}
 
-			FLAG_SET_SYNC(cache, CACHE_DIRTY);
-
 			pthread_spin_lock(&nvmed->cache_list_lock);
 			TAILQ_REMOVE(&nvmed->lru_head, cache, cache_list);
+			TAILQ_INSERT_TAIL(&nvmed->lru_head, cache, cache_list);
+
+			if(!FLAG_ISSET(cache, CACHE_WRITEBACK))
+				TAILQ_INSERT_TAIL(&temp_head, cache, io_list);
+
+			pthread_spin_lock(&nvmed_handle->dirty_list_lock);
+			if(!FLAG_ISSET_SYNC(cache, CACHE_DIRTY)) {
+				FLAG_SET_SYNC(cache, CACHE_DIRTY);
+				LIST_INSERT_HEAD(&nvmed_handle->dirty_list, cache, handle_cache_list);
+			}
+			pthread_spin_unlock(&nvmed_handle->dirty_list_lock);
+
 			pthread_spin_unlock(&nvmed->cache_list_lock);
-			
-			TAILQ_INSERT_TAIL(&temp_head, cache, cache_list);
 		}
 	}
 	else {
@@ -1906,8 +1969,8 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 					nvmed_cache_io_rw(nvmed_handle, nvme_cmd_read, cache, \
 						cache->lpaddr * PAGE_SIZE, PAGE_SIZE, HANDLE_SYNC_IO);
 				}
-				memcpy(cache->ptr + cache_offs, buf + buf_offs, buf_copy_size);
-				buf_offs+= buf_copy_size;
+				memcpy(cache->ptr + cache_offs, buf, buf_copy_size);
+				buf_offs = buf_copy_size;
 			}
 			else if(cache_idx == io_blocks -1) {
 				buf_copy_size = len - buf_offs;
@@ -1917,11 +1980,11 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 						cache->lpaddr * PAGE_SIZE, PAGE_SIZE, HANDLE_SYNC_IO);
 				}
 
-				memcpy(cache->ptr, buf + buf_offs, buf_copy_size);
+				memcpy(cache->ptr, buf, buf_copy_size);
 			}
 			else {
 				buf_copy_size = PAGE_SIZE;
-				memcpy(cache->ptr, buf + buf_offs, buf_copy_size);
+				memcpy(cache->ptr, buf, buf_copy_size);
 				buf_offs+= PAGE_SIZE;
 			}
 			
@@ -1933,30 +1996,79 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 			else {
 				cache_idx++;
 			}
-
-			FLAG_SET_SYNC(cache, CACHE_DIRTY);
 		
-			TAILQ_INSERT_TAIL(&temp_head, cache, cache_list);
+			pthread_spin_lock(&nvmed->cache_list_lock);
+
+			TAILQ_INSERT_TAIL(&nvmed->lru_head, cache, cache_list);
+
+			pthread_spin_lock(&nvmed_handle->dirty_list_lock);
+			if(!FLAG_ISSET_SYNC(cache, CACHE_DIRTY)) {
+				FLAG_SET_SYNC(cache, CACHE_DIRTY);
+				LIST_INSERT_HEAD(&nvmed_handle->dirty_list, cache, handle_cache_list);
+			}
+			pthread_spin_unlock(&nvmed_handle->dirty_list_lock);
+
+			pthread_spin_unlock(&nvmed->cache_list_lock);
+			
+			TAILQ_INSERT_TAIL(&temp_head, cache, io_list);
 		}
 	}
 
+	if(nvmed->process_cq_status == TD_STATUS_SUSPEND) {
+		pthread_mutex_lock(&nvmed->process_cq_mutex);
+		pthread_cond_signal(&nvmed->process_cq_cond);
+		pthread_mutex_unlock(&nvmed->process_cq_mutex);
+	}
 
-	nvmed_cache_io_rw(nvmed_handle, nvme_cmd_write, temp_head.tqh_first, \
+	// IO MERGE AND EXEC
+	if(!FLAG_ISSET(nvmed_handle, HANDLE_SYNC_IO)) {
+		pthread_spin_lock(&nvmed_handle->io_head_lock);
+		while(temp_head.tqh_first != NULL) {
+			cache = temp_head.tqh_first;
+			cache->handle = nvmed_handle;
+			//if io_head empty?
+			if(TAILQ_EMPTY(&nvmed_handle->io_head)) {
+				FLAG_SET(cache, CACHE_WRITEBACK);
+				TAILQ_REMOVE(&temp_head, cache, io_list);
+				TAILQ_INSERT_HEAD(&nvmed_handle->io_head, cache, io_list);
+				nvmed_handle->num_io_head++;
+			}
+			//back merge?
+			else if(TAILQ_LAST(&nvmed_handle->io_head, io_list)->lpaddr + 1
+					== cache->lpaddr) {
+				FLAG_SET(cache, CACHE_WRITEBACK);
+				TAILQ_REMOVE(&temp_head, cache, io_list);
+				TAILQ_INSERT_TAIL(&nvmed_handle->io_head, cache, io_list);
+				nvmed_handle->num_io_head++;
+			}
+			//front merge?
+			else if(TAILQ_FIRST(&nvmed_handle->io_head)->lpaddr - 1
+					== cache->lpaddr) {
+				FLAG_SET(cache, CACHE_WRITEBACK);
+				TAILQ_REMOVE(&temp_head, cache, io_list);
+				TAILQ_INSERT_HEAD(&nvmed_handle->io_head, cache, io_list);
+				nvmed_handle->num_io_head++;
+			}
+			else {
+				__evict_handle_dirty_page(nvmed_handle);
+			}
+		}
+
+		if(nvmed_handle->num_io_head == 128) {
+			__evict_handle_dirty_page(nvmed_handle);
+		}
+
+		pthread_spin_unlock(&nvmed_handle->io_head_lock);
+	}
+	else {
+		nvmed_cache_io_rw(nvmed_handle, nvme_cmd_write, temp_head.tqh_first, \
 			start_block * PAGE_SIZE, io_blocks * PAGE_SIZE, nvmed_handle->flags);
-	
-	while(temp_head.tqh_first != NULL) {
-		cache = temp_head.tqh_first;
-		TAILQ_REMOVE(&temp_head, cache, cache_list);
-	
-		pthread_spin_lock(&nvmed->cache_list_lock);
-		TAILQ_INSERT_TAIL(&nvmed->lru_head, cache, cache_list);
-		LIST_INSERT_HEAD(&nvmed_handle->dirty_list, cache, handle_cache_list);
-		pthread_spin_unlock(&nvmed->cache_list_lock);
 	}
 
 	total_write = len;
 
-	nvmed_handle->offset += total_write;
+	if(!pio)
+		nvmed_handle->offset += total_write;
 
 	free(cacheP);
 
@@ -1964,42 +2076,73 @@ ssize_t nvmed_buffer_write(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 }
 
 //offset, length -> should be 512B Aligned
+
+ssize_t nvmed_pread(NVMED_HANDLE* nvmed_handle, void* buf, size_t count, off_t offset) {
+	ssize_t ret;
+	//fprintf(stderr, "%s: %lu %lu\n", __func__, offset, count);
+	ret = nvmed_handle->read_func(nvmed_handle, nvme_cmd_read, 
+			buf, offset, count, NVMED_TRUE, NULL);
+	return ret;
+}
+
 ssize_t nvmed_read(NVMED_HANDLE* nvmed_handle, void* buf, size_t count) {
 	ssize_t ret;
 	
 	ret = nvmed_handle->read_func(nvmed_handle, nvme_cmd_read, 
-			buf, nvmed_handle->offset, count, NULL);
+			buf, nvmed_handle->offset, count, NVMED_FALSE, NULL);
 
 	return ret;
 }
 
 //offset, length -> should be 512B Aligned
+ssize_t nvmed_pwrite(NVMED_HANDLE* nvmed_handle, void* buf, size_t count, off_t offset) {
+	ssize_t ret;
+	//fprintf(stderr, "%s: %lu %lu\n", __func__, offset, count);
+	ret = nvmed_handle->write_func(nvmed_handle, nvme_cmd_write, 
+			buf, offset, count, NVMED_TRUE, NULL);
+
+	return ret;
+}
+
 ssize_t nvmed_write(NVMED_HANDLE* nvmed_handle, void* buf, size_t count) {
 	ssize_t ret;
 	
 	ret = nvmed_handle->write_func(nvmed_handle, nvme_cmd_write, 
-			buf, nvmed_handle->offset, count, NULL);
+			buf, nvmed_handle->offset, count, NVMED_FALSE, NULL);
 
 	return ret;
 }
 
 void nvmed_flush_handle(NVMED_HANDLE* nvmed_handle) {
-	NVMED_CACHE *cache;
-
-	while (nvmed_handle->dirty_list.lh_first != NULL) {
-		cache = nvmed_handle->dirty_list.lh_first;
-		nvmed_cache_io_rw(nvmed_handle, nvme_cmd_write, cache, 
-				cache->lpaddr * PAGE_SIZE, PAGE_SIZE, HANDLE_SYNC_IO);
-		LIST_REMOVE(cache, handle_cache_list);
-	}
+	pthread_spin_lock(&nvmed_handle->io_head_lock);
+		if(!TAILQ_EMPTY(&nvmed_handle->io_head)) {
+			__evict_handle_dirty_page(nvmed_handle);
+		}
+	pthread_spin_unlock(&nvmed_handle->io_head_lock);
 }
 
-int nvmed_flush(NVMED_HANDLE* nvmed_handle) {
-	nvmed_flush_handle(nvmed_handle);
+void nvmed_flush(NVMED_HANDLE* __nvmed_handle) {
+	NVMED* nvmed = HtoD(__nvmed_handle);
+	NVMED_QUEUE* nvmed_queue;
+	NVMED_HANDLE* nvmed_handle;
+
+	pthread_spin_lock(&nvmed->mngt_lock);
+	for (nvmed_queue = nvmed->queue_head.lh_first;
+			nvmed_queue != NULL; nvmed_queue = nvmed_queue->queue_list.le_next) {
+		// handle writeback
+		for (nvmed_handle = nvmed_queue->handle_head.lh_first;
+				nvmed_handle != NULL; nvmed_handle = nvmed_handle->handle_list.le_next) {
+			nvmed_flush_handle(nvmed_handle);
+		}
+	}
+	pthread_spin_unlock(&nvmed->mngt_lock);
+
+	//nvmed_flush_handle(nvmed_handle);
+	
+	nvmed_handle = __nvmed_handle;
 	if(HtoD(nvmed_handle)->dev_info->vwc != 0) 
 		nvmed_io(nvmed_handle, nvme_cmd_flush, 0, 0, 0, NULL, 0, 0, HANDLE_SYNC_IO, NULL);
-
-	return 0;
+	
 }
 
 int nvmed_discard(NVMED_HANDLE* nvmed_handle, unsigned long start, unsigned int len) {

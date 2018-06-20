@@ -36,8 +36,6 @@
 #define NVMED_IOCTL_GET_USER		_IOWR('N', 0x70, struct nvmed_user_quota)
 #define NVMED_IOCTL_SET_USER		_IOWR('N', 0x71, struct nvmed_user_quota)
 
-#define NVMED_CACHE_INIT_NUM_PAGES	2560	
-
 #define SQ_SIZE(depth)		(depth * sizeof(struct nvme_command))
 #define CQ_SIZE(depth)		(depth * sizeof(struct nvme_completion))
 
