@@ -133,10 +133,6 @@ static void fio_nvmed_cleanup(struct thread_data *td)
 	free(nvmed_io_handle->iocq);
 	free(nvmed_io_handle);
 
-	if(nvmed.active_queue == 0) {
-		nvmed_close(nvmed.nvmed);
-		nvmed.nvmed = NULL;
-	}
 
     pthread_mutex_unlock(&nvmed.mutex);
 }
@@ -285,6 +281,10 @@ static int fio_nvmed_queue(struct thread_data *td, struct io_u *io_u)
  */
 static int fio_nvmed_open(struct thread_data *td, struct fio_file *f)
 {
+	if(nvmed.nvmed == NULL) {
+		nvmed.nvmed = nvmed_open((char*)f->file_name, 0);
+		nvmed.dev_size = nvmed.nvmed->dev_info->capacity;
+	}
     return 0;
 }
 
@@ -293,6 +293,10 @@ static int fio_nvmed_open(struct thread_data *td, struct fio_file *f)
  */
 static int fio_nvmed_close(struct thread_data *td, struct fio_file *f)
 {
+	if(nvmed.active_queue == 0) {
+		nvmed_close(nvmed.nvmed);
+		nvmed.nvmed = NULL;
+	}
     return 0;
 }
 
