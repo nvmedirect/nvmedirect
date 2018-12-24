@@ -8,12 +8,12 @@
  * modify it under the terms of the GNU General Public License
  * as published by the Free Software Foundation; either version 2
  * of the License, or (at your option) any later version.
- * 
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
@@ -85,7 +85,7 @@ static int fio_nvmed_init(struct thread_data *td)
 	NVMED_QUEUE *queue;
 	NVMED_HANDLE *handle;
 	nvmed_io_handle = calloc(1, sizeof(nvmed_io_thread_t));
-	
+
     pthread_mutex_lock(&nvmed.mutex);
 
 	queue = nvmed_queue_create(nvmed.nvmed, 0);
@@ -129,7 +129,7 @@ static void fio_nvmed_cleanup(struct thread_data *td)
 	nvmed_queue_destroy(queue);
 
 	nvmed.active_queue--;
-	
+
 	free(nvmed_io_handle->iocq);
 	free(nvmed_io_handle);
 
@@ -321,7 +321,7 @@ static int fio_nvmed_io_u_init(struct thread_data *td, struct io_u *io_u)
 	nvmed_iou->td = td;
 	nvmed_iou->io_u = io_u;
 	io_u->engine_data = nvmed_iou;
-	
+
     return 0;
 }
 
