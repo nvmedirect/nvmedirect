@@ -371,6 +371,10 @@ NVMED_HANDLE* nvmed_handle_create(NVMED_QUEUE* nvmed_queue, int flags) {
 	nvmed_handle->pa_prpBuf = calloc(1, sizeof(u64) * nvmed_handle->prpBuf_size);
 	tempPtr = mmap(NULL, PAGE_SIZE * nvmed_handle->prpBuf_size, PROT_READ | PROT_WRITE,
 			MAP_ANONYMOUS | MAP_LOCKED | MAP_SHARED, -1, 0);
+    if (tempPtr == MAP_FAILED) {
+        perror("Error with Mmap! If error is resource busy, check mlock limit");
+        return NULL;
+    }
 
 	memset(tempPtr, 0, PAGE_SIZE * nvmed_handle->prpBuf_size);
 
