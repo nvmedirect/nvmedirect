@@ -149,15 +149,31 @@
 * Return Value
     * On success, nvmed_read() or nvmed_write() returns the total bytes read or written
     * On error, -1 is returned
+
+
+### ssize_t nvmed_pread(NVMED_HANDLE* nvmed_handle, void* buf, size_t count, off_t offset)
+
+### ssize_t nvmed_pwrite(NVMED_HANDLE* nvmed_handle, void* buf, size_t count, off_t offset)
+* Read from or write to the device at specified offset
+* For direct I/O, _count_ should be aligned to the sector size (512 Bytes)
+* Argument
+    * handle : pointer to the struct NVMED_HANDLE
+    * buf : pointer to the buffer
+        * It is recommended to allocate the buffer by nvmed_get_buffer()
+        * Otherwise, the memory region should be pinned explicitly using mlock() 
+          and there will be slight overhead to translate the virtual address to 
+          the physical address on every I/O
+    * count : size of read/write bytes
+    * offset : byte offset to read/write from/to.
+* Return Value
+    * On success, nvmed_pread() or nvmed_pwrite() returns the total bytes read or written
+    * On error, -1 is returned
     
-### int nvmed_flush (NVMED_HANDLE* handle);
+### void nvmed_flush (NVMED_HANDLE* handle);
 * Flush dirty block cache to disk (for buffered writes using block cache) and 
   issue flush command 
 * Argument
     * handle : pointer to the struct NVMED_HANDLE
-* Return Value
-    * On success, nvmed_flush() returns 0
-    * On error, -1 is returned
     
 ### int nvmed_discard (NVMED_HANDLE* handle, unsigned long start, unsigned int len);
 * Issue discard command to disk on specific region
