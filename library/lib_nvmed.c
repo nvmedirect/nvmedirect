@@ -1552,7 +1552,7 @@ ssize_t nvmed_io_rw(NVMED_HANDLE* nvmed_handle, u8 opcode, void* buf,
 }
 
 off_t nvmed_lseek(NVMED_HANDLE* nvmed_handle, off_t offset, int whence) {
-	int ret = -1;
+	off_t ret = -1;
 
 	if(whence == SEEK_SET) {
 		if(offset < HtoD(nvmed_handle)->dev_info->capacity) {
