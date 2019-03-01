@@ -1014,7 +1014,7 @@ ssize_t nvmed_io(NVMED_HANDLE* nvmed_handle, u8 opcode,
 	memset(cmnd, 0, sizeof(*cmnd));
 
 	//remap start_lba
-	start_lba += nvmed->dev_info->start_sect;
+	start_lba += nvmed->dev_info->start_sect << nvmed->dev_info->lba_shift;
 
 	switch(opcode) {
 		case nvme_cmd_flush:
